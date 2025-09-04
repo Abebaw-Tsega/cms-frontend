@@ -1,12 +1,31 @@
-import { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { LogOut, User, ChevronDown, Camera, Save, X } from 'lucide-react';
-import axios from '../lib/axios';
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  LogOut,
+  User,
+  ChevronDown,
+  Camera,
+  Save,
+  X,
+} from "lucide-react";
+import axios from "../lib/axios";
 
 interface ProfileDropdownProps {
   user: {
@@ -20,50 +39,141 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [profileData, setProfileData] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
-    profilePicture: `https://api.dicebear.com/7.x/initials/svg?seed=${user.name}&backgroundColor=3b82f6&textColor=ffffff`
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+    profilePicture: `https://api.dicebear.com/7.x/initials/svg?seed=${user.name}&backgroundColor=3b82f6&textColor=ffffff`,
   });
-  const [extraInfo, setExtraInfo] = useState<any>({});
+  const [extraInfo, setExtraInfo] = useState<any>({
+    full_name: user.name, // Default to user.name until API data is fetched
+    email: user.email,
+    general_role: "",
+    specific_role: "",
+    phone: "",
+  });
 
   useEffect(() => {
-    // Fetch extra info for student or staff
-    if (user.role === 'student') {
-      axios.get('/student/profile')
-        .then(res => setExtraInfo(res.data))
-        .catch(() => setExtraInfo({}));
-    } else if (user.role === 'staff' ) {
-      axios.get('/staff/profile')
-        .then(res => setExtraInfo(res.data))
-        .catch(() => setExtraInfo({}));
+    // Fetch extra info based on role
+    if (user.role === "student") {
+      axios
+        .get("/student/profile")
+        .then((res) => {
+          const data = res.data || {};
+          setExtraInfo({
+            full_name: `${data.first_name || ""} ${data.last_name || ""}`.trim() || user.name,
+            email: data.email || user.email,
+            id_no: data.id_no || "",
+            department_name: data.department_name || "",
+            phone: data.phone || "",
+          });
+          console.log("Student profile data:", data); // Debug log
+        })
+        .catch((err) => {
+          console.error("Student profile fetch error:", err);
+          setExtraInfo({
+            full_name: user.name,
+            email: user.email,
+            id_no: "",
+            department_name: "",
+            phone: "",
+          });
+        });
+    } else if (user.role === "staff") {
+      axios
+        .get("/staff/profile")
+        .then((res) => {
+          const data = res.data || {};
+          setExtraInfo({
+            full_name: `${data.first_name || ""} ${data.last_name || ""}`.trim() || user.name,
+            email: data.email || user.email,
+            general_role: data.general_role || "",
+            specific_role: data.specific_role || "",
+            phone: data.phone || "",
+          });
+          console.log("Staff profile data:", data); // Debug log
+        })
+        .catch((err) => {
+          console.error("Staff profile fetch error:", err);
+          setExtraInfo({
+            full_name: user.name,
+            email: user.email,
+            general_role: "",
+            specific_role: "",
+            phone: "",
+          });
+        });
+    } else if (user.role === "admin") {
+      axios
+        .get("/admin/profile")
+        .then((res) => {
+          const data = res.data || {};
+          setExtraInfo({
+            full_name: `${data.first_name || ""} ${data.last_name || ""}`.trim() || user.name,
+            email: data.email || user.email,
+            general_role: data.general_role || "",
+            specific_role: data.specific_role || "",
+            phone: data.phone || "",
+          });
+          console.log("Admin profile data:", data); // Debug log
+        })
+        .catch((err) => {
+          console.error("Admin profile fetch error:", err);
+          setExtraInfo({
+            full_name: user.name,
+            email: user.email,
+            general_role: "",
+            specific_role: "",
+            phone: "",
+          });
+        });
+    } else if (user.role === "superadmin") {
+      axios
+        .get("/admin/profile") // Placeholder endpoint, adjust as needed
+        .then((res) => {
+          const data = res.data || {};
+          setExtraInfo({
+            full_name: `${data.first_name || ""} ${data.last_name || ""}`.trim() || user.name,
+            email: data.email || user.email,
+            general_role: data.general_role || "",
+            specific_role: data.specific_role || "",
+            phone: data.phone || "",
+          });
+          console.log("Superadmin profile data:", data); // Debug log
+        })
+        .catch((err) => {
+          console.error("Superadmin profile fetch error:", err);
+          setExtraInfo({
+            full_name: user.name,
+            email: user.email,
+            general_role: "",
+            specific_role: "",
+            phone: "",
+          });
+        });
     }
-  }, [user.role]);
+  }, [user.role, user.name, user.email]);
 
-  const getInitials = (name: string, lastName?: string) => {
-    if (name && lastName) {
-      return `${name[0]}${lastName[0]}`.toUpperCase();
-    }
+  const getInitials = (name: string) => {
     return name
-      .split(' ')
-      .map(word => word[0])
-      .join('')
+      .split(" ")
+      .map((word) => word[0])
+      .join("")
       .toUpperCase()
       .slice(0, 2);
   };
 
   const getRoleColor = (role: string) => {
     switch (role) {
-      case 'superadmin':
-        return 'bg-purple-600';
-      case 'admin':
-        return 'bg-red-500';
-      case 'staff':
-        return 'bg-blue-500';
-      case 'student':
-        return 'bg-green-500';
+      case "superadmin":
+        return "bg-purple-600";
+      case "admin":
+        return "bg-red-500";
+      case "staff":
+        return "bg-blue-500";
+      case "student":
+        return "bg-green-500";
       default:
-        return 'bg-gray-500';
+        return "bg-gray-500";
     }
   };
 
@@ -72,9 +182,9 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        setProfileData(prev => ({
+        setProfileData((prev) => ({
           ...prev,
-          profilePicture: event.target?.result as string
+          profilePicture: event.target?.result as string,
         }));
       };
       reader.readAsDataURL(file);
@@ -83,9 +193,9 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
 
   const generateNewAvatar = () => {
     const randomSeed = Math.random().toString(36).substring(7);
-    setProfileData(prev => ({
+    setProfileData((prev) => ({
       ...prev,
-      profilePicture: `https://api.dicebear.com/7.x/initials/svg?seed=${randomSeed}&backgroundColor=3b82f6&textColor=ffffff`
+      profilePicture: `https://api.dicebear.com/7.x/initials/svg?seed=${randomSeed}&backgroundColor=3b82f6&textColor=ffffff`,
     }));
   };
 
@@ -93,44 +203,44 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
     // Only validate if password is being changed
     if (profileData.newPassword.trim()) {
       if (!profileData.currentPassword.trim()) {
-        alert('Please enter your current password to change it.');
+        alert("Please enter your current password to change it.");
         return;
       }
       if (profileData.newPassword !== profileData.confirmPassword) {
-        alert('New passwords do not match.');
+        alert("New passwords do not match.");
         return;
       }
       if (profileData.newPassword.length < 6) {
-        alert('New password must be at least 6 characters long.');
+        alert("New password must be at least 6 characters long.");
         return;
       }
       // Update password in DB
       try {
-        await axios.post('/change-password', {
+        await axios.post("/change-password", {
           currentPassword: profileData.currentPassword,
           newPassword: profileData.newPassword,
-          email: extraInfo.email || user.email
+          email: extraInfo.email || user.email,
         });
-        alert('Password updated successfully!');
+        alert("Password updated successfully!");
       } catch (err: any) {
-        alert(err.response?.data?.error || 'Failed to update password');
+        alert(err.response?.data?.error || "Failed to update password");
         return;
       }
     }
     // Save profile picture changes (if any)
-    alert('Profile updated successfully!');
+    alert("Profile updated successfully!");
     setIsProfileOpen(false);
-    setProfileData(prev => ({
+    setProfileData((prev) => ({
       ...prev,
-      currentPassword: '',
-      newPassword: '',
-      confirmPassword: ''
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
     }));
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('user');
-    window.location.href = '/';
+    localStorage.removeItem("user");
+    window.location.href = "/";
   };
 
   return (
@@ -142,16 +252,13 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
             className="flex items-center space-x-3 hover:bg-gray-50 p-2 h-auto"
           >
             <div className="text-right hidden sm:block">
-              <p className="font-medium text-gray-900 text-sm">{extraInfo?.first_name || ''} {extraInfo?.last_name || ''}</p>
+              <p className="font-medium text-gray-900 text-sm">{extraInfo.full_name}</p>
               <p className="text-xs text-gray-600 capitalize">{user.role}</p>
             </div>
             <Avatar className="w-8 h-8">
-              <AvatarImage
-                src={profileData.profilePicture}
-                alt={user.name}
-              />
+              <AvatarImage src={profileData.profilePicture} alt={user.name} />
               <AvatarFallback className={`${getRoleColor(user.role)} text-white text-xs font-medium`}>
-                {getInitials(user.name)}
+                {getInitials(extraInfo.full_name)}
               </AvatarFallback>
             </Avatar>
             <ChevronDown className="w-4 h-4 text-gray-500" />
@@ -162,19 +269,20 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
           <div className="p-3 border-b">
             <div className="flex items-center space-x-3">
               <Avatar className="w-10 h-10">
-                <AvatarImage
-                  src={profileData.profilePicture}
-                  alt={user.name}
-                />
+                <AvatarImage src={profileData.profilePicture} alt={user.name} />
                 <AvatarFallback className={`${getRoleColor(user.role)} text-white font-medium`}>
-                  {getInitials(user.name)}
+                  {getInitials(extraInfo.full_name)}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-900 truncate">{extraInfo?.first_name || ''} {extraInfo?.last_name || ''}</p>
+                <p className="font-medium text-gray-900 truncate">{extraInfo.full_name}</p>
                 <p className="text-sm text-gray-600 truncate">{user.email}</p>
                 <p className="text-xs text-gray-500 capitalize mt-1">
-                  <span className={`inline-block w-2 h-2 rounded-full mr-1 ${getRoleColor(user.role)}`}></span>
+                  <span
+                    className={`inline-block w-2 h-2 rounded-full mr-1 ${getRoleColor(
+                      user.role
+                    )}`}
+                  ></span>
                   {user.role}
                 </p>
               </div>
@@ -223,12 +331,9 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
               <Label className="text-base font-medium">Profile Picture</Label>
               <div className="flex items-center space-x-4">
                 <Avatar className="w-20 h-20">
-                  <AvatarImage
-                    src={profileData.profilePicture}
-                    alt={user.name}
-                  />
+                  <AvatarImage src={profileData.profilePicture} alt={user.name} />
                   <AvatarFallback className={`${getRoleColor(user.role)} text-white text-lg font-medium`}>
-                    {getInitials(user.name)}
+                    {getInitials(extraInfo.full_name)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="space-y-2">
@@ -236,7 +341,7 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => document.getElementById('picture-upload')?.click()}
+                      onClick={() => document.getElementById("picture-upload")?.click()}
                       className="flex items-center space-x-1"
                     >
                       <Camera className="w-4 h-4" />
@@ -273,47 +378,79 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
                 <div>
                   <Label className="text-sm text-gray-600">Full Name</Label>
                   <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                    <span className="text-sm font-medium text-gray-900">{extraInfo?.first_name || ''} {extraInfo?.last_name || ''}</span>
+                    <span className="text-sm font-medium text-gray-900">
+                      {extraInfo.full_name}
+                    </span>
                   </div>
                 </div>
                 <div>
                   <Label className="text-sm text-gray-600">Email</Label>
                   <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                    <span className="text-sm text-gray-900">{extraInfo?.email || user.email}</span>
+                    <span className="text-sm text-gray-900">{extraInfo.email}</span>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">Phone</Label>
+                  <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
+                    <span className="text-sm text-gray-900">{extraInfo.phone || "Not specified"}</span>
                   </div>
                 </div>
                 <div>
                   <Label className="text-sm text-gray-600">Role</Label>
                   <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getRoleColor(user.role)} text-white`}>
+                    <span
+                      className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getRoleColor(
+                        user.role
+                      )} text-white`}
+                    >
                       {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
                     </span>
                   </div>
                 </div>
-                {user.role === 'student' && (
+                {user.role === "student" && (
                   <>
                     <div>
                       <Label className="text-sm text-gray-600">Student ID</Label>
                       <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                        <span className="text-sm text-gray-900">{extraInfo?.id_no || ''}</span>
+                        <span className="text-sm text-gray-900">
+                          {extraInfo.id_no || ""}
+                        </span>
                       </div>
                     </div>
                     <div>
                       <Label className="text-sm text-gray-600">Department</Label>
                       <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                        <span className="text-sm text-gray-900">{extraInfo?.department_name || ''}</span>
+                        <span className="text-sm text-gray-900">
+                          {extraInfo.department_name || ""}
+                        </span>
                       </div>
                     </div>
                   </>
                 )}
-                {(user.role === 'staff' || user.role === 'admin' || user.role === 'superadmin') && (
-                  <div>
-                    <Label className="text-sm text-gray-600">General Role</Label>
-                    <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                      <span className="text-sm text-gray-900">{extraInfo?.general_role || ''}</span>
+                {/* {user.role === "staff" && (
+                  <>
+                    <div>
+                      <Label className="text-sm text-gray-600">General Role</Label>
+                      <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
+                        <span className="text-sm text-gray-900">
+                          {extraInfo.general_role || "Not specified"}
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  </>
                 )}
+                {(user.role === "admin" || user.role === "superadmin") && (
+                  <>
+                    <div>
+                      <Label className="text-sm text-gray-600">General Role</Label>
+                      <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
+                        <span className="text-sm text-gray-900">
+                          {extraInfo.general_role || "Not specified"}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                )} */}
               </div>
             </div>
 
@@ -322,34 +459,55 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
               <Label className="text-base font-medium">Change Password</Label>
               <div className="space-y-3">
                 <div>
-                  <Label htmlFor="current-password" className="text-sm">Current Password</Label>
+                  <Label htmlFor="current-password" className="text-sm">
+                    Current Password
+                  </Label>
                   <Input
                     id="current-password"
                     type="password"
                     value={profileData.currentPassword}
-                    onChange={(e) => setProfileData(prev => ({ ...prev, currentPassword: e.target.value }))}
+                    onChange={(e) =>
+                      setProfileData((prev) => ({
+                        ...prev,
+                        currentPassword: e.target.value,
+                      }))
+                    }
                     className="mt-1"
                     placeholder="Enter current password"
                   />
                 </div>
                 <div>
-                  <Label htmlFor="new-password" className="text-sm">New Password</Label>
+                  <Label htmlFor="new-password" className="text-sm">
+                    New Password
+                  </Label>
                   <Input
                     id="new-password"
                     type="password"
                     value={profileData.newPassword}
-                    onChange={(e) => setProfileData(prev => ({ ...prev, newPassword: e.target.value }))}
+                    onChange={(e) =>
+                      setProfileData((prev) => ({
+                        ...prev,
+                        newPassword: e.target.value,
+                      }))
+                    }
                     className="mt-1"
                     placeholder="Enter new password"
                   />
                 </div>
                 <div>
-                  <Label htmlFor="confirm-password" className="text-sm">Confirm New Password</Label>
+                  <Label htmlFor="confirm-password" className="text-sm">
+                    Confirm New Password
+                  </Label>
                   <Input
                     id="confirm-password"
                     type="password"
                     value={profileData.confirmPassword}
-                    onChange={(e) => setProfileData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                    onChange={(e) =>
+                      setProfileData((prev) => ({
+                        ...prev,
+                        confirmPassword: e.target.value,
+                      }))
+                    }
                     className="mt-1"
                     placeholder="Confirm new password"
                   />
@@ -368,11 +526,11 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
               onClick={() => {
                 setIsProfileOpen(false);
                 // Reset password fields when closing
-                setProfileData(prev => ({
+                setProfileData((prev) => ({
                   ...prev,
-                  currentPassword: '',
-                  newPassword: '',
-                  confirmPassword: ''
+                  currentPassword: "",
+                  newPassword: "",
+                  confirmPassword: "",
                 }));
               }}
               className="flex items-center space-x-1"

@@ -54,17 +54,52 @@ export default function Login() {
     }
   };
 
-  const handleForgotPassword = async (e: React.FormEvent) => {
+  const [forgotError, setForgotError] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState('');
+  const [forgotStep, setForgotStep] = useState(1); // 1: request code, 2: enter code & new password
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+
+  // Step 1: Request reset code
+  const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setForgotError('');
+    setForgotSuccess('');
+    try {
+      await axios.post('/request-password-reset', { email: forgotEmail });
+      setForgotSuccess('Reset code sent to your email.');
+      setForgotStep(2);
+    } catch (err: any) {
+      setForgotError(err.response?.data?.error || 'Failed to send reset code');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    // Simulate forgot password
-    setTimeout(() => {
-      alert(`Password reset link sent to ${forgotEmail}`);
+  // Step 2: Reset password with code
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setForgotError('');
+    setForgotSuccess('');
+    try {
+      await axios.post('/reset-password', {
+        email: forgotEmail,
+        token: resetCode,
+        newPassword,
+      });
+      setForgotSuccess('Password reset successfully. You can now log in.');
       setShowForgotPassword(false);
       setForgotEmail('');
+      setResetCode('');
+      setNewPassword('');
+      setForgotStep(1);
+    } catch (err: any) {
+      setForgotError(err.response?.data?.error || 'Failed to reset password');
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   return (
@@ -85,7 +120,7 @@ export default function Login() {
               </CardTitle>
               <CardDescription className="text-muted-foreground">
                 {showForgotPassword
-                  ? 'Enter your email to receive a password reset link'
+                  ? 'Enter your email to receive a password reset code'
                   : 'Sign in to your clearance management account'
                 }
               </CardDescription>
@@ -160,38 +195,105 @@ export default function Login() {
                   </Button>
                 </form>
               ) : (
-                <form onSubmit={handleForgotPassword} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="forgot-email">Email Address</Label>
-                    <Input
-                      id="forgot-email"
-                      type="email"
-                      placeholder="your.email@aastu.edu.et"
-                      value={forgotEmail}
-                      onChange={(e) => setForgotEmail(e.target.value)}
-                      required
-                      className="border-gray-300 focus:border-aastu-blue focus:ring-aastu-blue"
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => setShowForgotPassword(false)}
-                    >
-                      Back to Login
-                    </Button>
-                    <Button
-                      type="submit"
-                      className="flex-1 bg-aastu-blue hover:bg-aastu-blue/90 text-white"
-                      disabled={isLoading}
-                    >
-                      {isLoading ? 'Sending...' : 'Send Reset Link'}
-                    </Button>
-                  </div>
-                </form>
+                <div>
+                  {forgotStep === 1 ? (
+                    <form onSubmit={handleRequestReset} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="forgot-email">Email Address</Label>
+                        <Input
+                          id="forgot-email"
+                          type="email"
+                          placeholder="your.email@aastu.edu.et"
+                          value={forgotEmail}
+                          onChange={(e) => setForgotEmail(e.target.value)}
+                          required
+                          className="border-gray-300 focus:border-aastu-blue focus:ring-aastu-blue"
+                        />
+                      </div>
+                      {forgotError && (
+                        <Alert variant="destructive">
+                          <AlertDescription>{forgotError}</AlertDescription>
+                        </Alert>
+                      )}
+                      {forgotSuccess && (
+                        <Alert variant="default">
+                          <AlertDescription>{forgotSuccess}</AlertDescription>
+                        </Alert>
+                      )}
+                      <div className="flex gap-2 mt-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => { setShowForgotPassword(false); setForgotStep(1); setForgotEmail(''); setForgotError(''); setForgotSuccess(''); }}
+                        >
+                          Back to Login
+                        </Button>
+                        <Button
+                          type="submit"
+                          className="flex-1 bg-aastu-blue hover:bg-aastu-blue/90 text-white"
+                          disabled={isLoading}
+                        >
+                          {isLoading ? 'Sending...' : 'Send '}
+                        </Button>
+                      </div>
+                    </form>
+                  ) : (
+                    <form onSubmit={handleResetPassword} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="reset-code">Reset Code</Label>
+                        <Input
+                          id="reset-code"
+                          type="text"
+                          placeholder="Enter code from email"
+                          value={resetCode}
+                          onChange={e => setResetCode(e.target.value)}
+                          required
+                          className="border-gray-300 focus:border-aastu-blue focus:ring-aastu-blue"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-password">New Password</Label>
+                        <Input
+                          id="new-password"
+                          type="password"
+                          placeholder="Enter new password"
+                          value={newPassword}
+                          onChange={e => setNewPassword(e.target.value)}
+                          required
+                          className="border-gray-300 focus:border-aastu-blue focus:ring-aastu-blue"
+                        />
+                      </div>
+                      {forgotError && (
+                        <Alert variant="destructive">
+                          <AlertDescription>{forgotError}</AlertDescription>
+                        </Alert>
+                      )}
+                      {forgotSuccess && (
+                        <Alert variant="default">
+                          <AlertDescription>{forgotSuccess}</AlertDescription>
+                        </Alert>
+                      )}
+                      <div className="flex gap-2 mt-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => { setShowForgotPassword(false); setForgotStep(1); setForgotEmail(''); setResetCode(''); setNewPassword(''); setForgotError(''); setForgotSuccess(''); }}
+                        >
+                          Back to Login
+                        </Button>
+                        <Button
+                          type="submit"
+                          className="flex-1 bg-aastu-blue hover:bg-aastu-blue/90 text-white"
+                          disabled={isLoading}
+                        >
+                          {isLoading ? 'Resetting...' : 'Reset Password'}
+                        </Button>
+                      </div>
+                    </form>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>

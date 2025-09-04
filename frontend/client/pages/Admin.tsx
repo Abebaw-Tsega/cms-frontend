@@ -43,15 +43,14 @@ interface Student {
 }
 
 interface ClearanceRequest {
-  id: string;
-  type: string;
-  status: 'pending' | 'in_progress' | 'approved' | 'rejected';
-  submittedAt: string;
-  departments: {
-    name: string;
-    status: 'pending' | 'approved' | 'rejected';
-    approvedBy?: string;
-  }[];
+  request_id: string;
+  type_name: string;
+  overall_status: 'pending' | 'in_progress' | 'approved' | 'rejected';
+  created_at: string;
+  first_name: string;
+  last_name: string;
+  department_name: string;
+  year_of_study: number;
 }
 
 export default function Admin() {
@@ -70,35 +69,40 @@ export default function Admin() {
   const [filterDepartment, setFilterDepartment] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterLevel, setFilterLevel] = useState<string>('all');
-
   const [clearanceTypes, setClearanceTypes] = useState<any[]>([]);
-  const [recentRequests, setRecentRequests] = useState<any[]>([]);
+  const [recentRequests, setRecentRequests] = useState<ClearanceRequest[]>([]);
+
   useEffect(() => {
     const userData = localStorage.getItem("user");
     if (userData) {
       setUser(JSON.parse(userData));
     }
-    axios.get('admin/students')
+    axios.get('/admin/students')
       .then((res) => setStudents(res.data))
       .catch((err) => {
-        if (err.response && err.response.status === 403) {
+        console.error('Failed to fetch students:', err);
+        if (err.response?.status === 403) {
           alert('You do not have permission to view students.');
         }
         setStudents([]);
       });
     axios.get('/admin/clearance-types')
       .then((res) => setClearanceTypes(res.data))
-      .catch(() => setClearanceTypes([]));
-    axios.get('admin/data')
+      .catch((err) => {
+        console.error('Failed to fetch clearance types:', err);
+        setClearanceTypes([]);
+      });
+    axios.get('/admin/data')
       .then((res) => setRecentRequests(res.data))
       .catch((err) => {
-        if (err.response && err.response.status === 403) {
+        console.error('Failed to fetch clearance data:', err);
+        if (err.response?.status === 403) {
           alert('You do not have permission to view clearance data.');
         }
         setRecentRequests([]);
       });
     // Fetch system status from backend
-    axios.get('admin/system')
+    axios.get('/admin/system')
       .then(res => {
         setSystemStatus(!!res.data.is_active);
         setSystemReason(res.data.reason || '');
@@ -107,13 +111,16 @@ export default function Admin() {
         setSystemEndDate(res.data.endDate || '');
         setSystemEndTime(res.data.endTime || '');
       })
-      .catch(() => setSystemStatus(false));
+      .catch((err) => {
+        console.error('Failed to fetch system status:', err);
+        setSystemStatus(false);
+      });
   }, []);
 
   // Get unique departments for filter dropdown
   const departments = Array.from(new Set(students.map(s => s.department_name))).filter(Boolean);
 
-  // Filtering logic for flat student objects
+  // Filtering logic for students
   const filteredStudents = students.filter(
     s =>
       (filterYear === 'all' || String(s.year_of_study) === filterYear) &&
@@ -129,20 +136,18 @@ export default function Admin() {
         const endDateTime = new Date(`${systemEndDate}T${systemEndTime}`);
         const now = new Date();
         const timeDiff = endDateTime.getTime() - now.getTime();
-      console.log('time diff', timeDiff);
-        if (Number(timeDiff) <= 0) {
+        if (timeDiff <= 0) {
           setSystemStatus(false);
-          // Only send request if all required fields are present
-          if (systemReason && systemStartDate && systemStartTime && systemEndDate && systemEndTime) {
-            axios.put('admin/system-control', {
-              reason: systemReason,
-              startDate: systemStartDate,
-              startTime: systemStartTime,
-              endDate: systemEndDate,
-              endTime: systemEndTime,
-              is_active: false,
-            });
-          }
+          axios.put('/admin/system-control', {
+            reason: systemReason,
+            startDate: systemStartDate,
+            startTime: systemStartTime,
+            endDate: systemEndDate,
+            endTime: systemEndTime,
+            is_active: false,
+            clearance_type_id: clearanceTypes.find(type => type.type_name === systemReason)?.clearance_type_id || '',
+          })
+            .catch((err) => console.error('Failed to deactivate system:', err));
           setSystemReason('');
           setSystemEndTime('');
           setSystemEndDate('');
@@ -151,7 +156,6 @@ export default function Admin() {
           setTimeRemaining('');
           alert('System automatically turned OFF - scheduled time expired');
         } else {
-          // Calculate remaining time
           const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
           const hours = Math.floor((timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
           const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
@@ -164,9 +168,7 @@ export default function Admin() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [systemStatus, systemEndDate, systemEndTime, systemReason, systemStartDate, systemStartTime]);
-
-
+  }, [systemStatus, systemEndDate, systemEndTime, systemReason, systemStartDate, systemStartTime, clearanceTypes]);
 
   const getOverviewStats = () => {
     const totalStudents = students.length;
@@ -190,73 +192,66 @@ export default function Admin() {
       in_progress: 'bg-yellow-100 text-yellow-800 border-yellow-200',
       pending: 'bg-gray-100 text-gray-800 border-gray-200'
     };
-
     return <Badge className={variants[status as keyof typeof variants]}>{status.replace('_', ' ')}</Badge>;
   };
 
-  const handleSystemToggle = (newStatus: boolean) => {
-    console.log('new status',newStatus)
+  const handleSystemToggle = async (newStatus: boolean) => {
     if (newStatus) {
-      // Check if reason and time are provided
-      if (!systemReason || !systemEndDate || !systemEndTime) {
-        alert('Please select a reason and end date/time before activating the system.');
+      // Validate inputs
+      if (!systemReason || !systemStartDate || !systemStartTime || !systemEndDate || !systemEndTime) {
+        alert('Please provide a reason, start date/time, and end date/time before activating the system.');
         return;
       }
-
+      const startDateTime = new Date(`${systemStartDate}T${systemStartTime}`);
       const endDateTime = new Date(`${systemEndDate}T${systemEndTime}`);
       const now = new Date();
-
-      if (endDateTime <= now) {
-        alert('End date/time must be in the future.');
+      if (startDateTime < now) {
+        alert('Start date/time must be in the present or future.');
         return;
       }
-
-      setSystemStatus(true);
-
-      handleSystemUpdate(newStatus);
-
-      alert(`System activated! Reason: ${systemReason}. Will automatically turn off on ${endDateTime.toLocaleString()}`);
+      if (endDateTime <= startDateTime) {
+        alert('End date/time must be after start date/time.');
+        return;
+      }
+      try {
+        await axios.put('/admin/system-control', {
+          reason: systemReason,
+          startDate: systemStartDate,
+          startTime: systemStartTime,
+          endDate: systemEndDate,
+          endTime: systemEndTime,
+          is_active: true,
+          clearance_type_id: clearanceTypes.find(type => type.type_name === systemReason)?.clearance_type_id || '',
+        });
+        setSystemStatus(true);
+        alert(`System activated for ${systemReason.replace(/_/g, ' ')}. Will automatically turn off on ${endDateTime.toLocaleString()}`);
+      } catch (err: any) {
+        alert(err.response?.data?.error || 'Failed to activate system');
+      }
     } else {
-      handleSystemUpdate(newStatus);
-      setSystemStatus(false);
-      setSystemReason('');
-      setSystemEndTime('');
-      setSystemEndDate('');
-      setTimeRemaining('');
-      alert('System manually deactivated! Student submissions are temporarily disabled.');
+      try {
+        await axios.put('/admin/system-control', {
+          reason: systemReason,
+          startDate: systemStartDate,
+          startTime: systemStartTime,
+          endDate: systemEndDate,
+          endTime: systemEndTime,
+          is_active: false,
+          clearance_type_id: clearanceTypes.find(type => type.type_name === systemReason)?.clearance_type_id || '',
+        });
+        setSystemStatus(false);
+        setSystemReason('');
+        setSystemEndTime('');
+        setSystemEndDate('');
+        setSystemStartTime('');
+        setSystemStartDate('');
+        alert('System manually deactivated! Student submissions are temporarily disabled.');
+      } catch (err: any) {
+        alert(err.response?.data?.error || 'Failed to deactivate system');
+      }
     }
   };
 
-  const handleSystemUpdate = async (newStatus: boolean) => {
-    // console.log({ reason: systemReason, startDate: systemStartDate, startTime: systemStartTime, endDate: systemEndDate, endTime: systemEndTime, is_active: newStatus });
-    if (!systemReason || !systemStartDate || !systemStartTime || !systemEndDate || !systemEndTime) {
-      alert('Please select a reason and start/end date/time before updating the system.');
-      return;
-    }
-    const startDateTime = new Date(`${systemStartDate}T${systemStartTime}`);
-    const endDateTime = new Date(`${systemEndDate}T${systemEndTime}`);
-    if (endDateTime <= startDateTime) {
-      alert('End date/time must be after start date/time.');
-      return;
-    }
-  
-
-    try {
-      await axios.put('admin/system-control', {
-        reason: systemReason,
-        startDate: systemStartDate,
-        startTime: systemStartTime,
-        endDate: systemEndDate,
-        endTime: systemEndTime,
-        is_active: newStatus,
-      });
-      alert('System settings updated!');
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  // --- FIXED TABLE RENDERING (lines 586 to 603) ---
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -411,9 +406,9 @@ export default function Admin() {
                             recentRequests.map(request => (
                               <tr key={request.request_id} className="border-b hover:bg-gray-50">
                                 <td className="p-3">{request.first_name} {request.last_name}</td>
-                                <td className="p-3">{request.department_name ? request.department_name : '-'}</td>
-                                <td className="p-3">{request.year_of_study ? request.year_of_study : '-'}</td>
-                                <td className="p-3">{request.type_name ? request.type_name : '-'}</td>
+                                <td className="p-3">{request.department_name || '-'}</td>
+                                <td className="p-3">{request.year_of_study || '-'}</td>
+                                <td className="p-3">{request.type_name || '-'}</td>
                                 <td className="p-3">{request.overall_status ? getStatusBadge(request.overall_status) : '-'}</td>
                                 <td className="p-3">{request.created_at ? new Date(request.created_at).toLocaleDateString() : '-'}</td>
                               </tr>
@@ -452,7 +447,6 @@ export default function Admin() {
                       Filter students by academic year, department, and clearance status
                     </CardDescription>
                   </CardHeader>
-                  {/* --- Students Filter Section --- */}
                   <CardContent>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                       <div>
@@ -547,7 +541,7 @@ export default function Admin() {
                                 <td className="p-3">{student.department_name}</td>
                                 <td className="p-3">{student.year_of_study}</td>
                                 <td className="p-3">{student.study_level}</td>
-                                <td className="p-3">{student.clearance_status}</td>
+                                <td className="p-3">{getStatusBadge(student.clearance_status)}</td>
                               </tr>
                             ))
                           ) : (
@@ -576,13 +570,10 @@ export default function Admin() {
                       Control system-wide settings and student submission access
                     </CardDescription>
                   </CardHeader>
-                  {/* --- System Control: Reason for Activation --- */}
                   <CardContent className="space-y-6">
-                    {/* System Configuration */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-4">
                         <h4 className="text-lg font-semibold text-aastu-blue">System Configuration</h4>
-
                         <div className="space-y-2">
                           <Label htmlFor="reason">Reason for Activation</Label>
                           <Select value={systemReason} onValueChange={setSystemReason} disabled={systemStatus}>
@@ -591,12 +582,13 @@ export default function Admin() {
                             </SelectTrigger>
                             <SelectContent>
                               {clearanceTypes.map(type => (
-                                <SelectItem key={type.clearance_type_id} value={type.type_name}>{type.type_name}</SelectItem>
+                                <SelectItem key={type.clearance_type_id} value={type.type_name}>
+                                  {type.type_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </div>
-
                         <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-2">
                             <Label htmlFor="startDate">Start Date</Label>
@@ -642,10 +634,8 @@ export default function Admin() {
                           </div>
                         </div>
                       </div>
-
                       <div className="space-y-4">
                         <h4 className="text-lg font-semibold text-aastu-blue">System Status</h4>
-
                         <div className="p-6 border-2 border-dashed border-gray-300 rounded-lg">
                           <div className="flex items-center justify-between">
                             <div className="space-y-2">
@@ -661,9 +651,8 @@ export default function Admin() {
                                   </h3>
                                   <p className="text-gray-600">
                                     {systemStatus
-                                      ? 'Students can currently submit clearance forms'
-                                      : 'Student submissions are currently disabled'
-                                    }
+                                      ? 'Students can submit one clearance form per schedule'
+                                      : 'Student submissions are currently disabled'}
                                   </p>
                                 </div>
                               </div>
@@ -681,7 +670,6 @@ export default function Admin() {
                             </div>
                           </div>
                         </div>
-
                         {timeRemaining && systemStatus && (
                           <Alert className="border-yellow-200 bg-yellow-50">
                             <Clock className="h-4 w-4 text-yellow-600" />
@@ -696,20 +684,18 @@ export default function Admin() {
                         )}
                       </div>
                     </div>
-
-                    <Alert className={systemStatus ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
+                    <Alert className={systemStatus ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}>
                       {systemStatus ? (
                         <CheckCircle className="h-4 w-4 text-green-600" />
                       ) : (
                         <XCircle className="h-4 w-4 text-red-600" />
                       )}
-                      <AlertDescription className={systemStatus ? 'text-green-700' : 'text-red-700'}>
+                      <AlertDescription>
                         <strong>System Status:</strong> {systemStatus ? 'Active' : 'Inactive'}
                         <br />
                         {systemStatus
-                          ? 'Students can submit new clearance forms and staff can process existing requests.'
-                          : 'New clearance form submissions are temporarily disabled. Existing requests can still be processed by staff.'
-                        }
+                          ? 'Students can submit one clearance form per schedule. Staff can process existing requests.'
+                          : 'New clearance form submissions are disabled. Existing requests can still be processed by staff.'}
                       </AlertDescription>
                     </Alert>
                   </CardContent>
@@ -719,8 +705,6 @@ export default function Admin() {
           </div>
         </main>
       </div>
-
-
       <Footer />
     </div>
   );

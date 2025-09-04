@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from '../lib/axios';
 import {
   Card,
@@ -8,16 +8,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -29,12 +19,8 @@ import {
   Clock,
   XCircle,
   FileText,
-  User,
   Send,
   AlertCircle,
-  LogOut,
-  University,
-  History,
 } from "lucide-react";
 import aastuLogo from "../components/assets/AASTU Logo.jpg";
 
@@ -42,25 +28,48 @@ export default function Student() {
   const [user, setUser] = useState<any>(null);
   const [studentProfile, setStudentProfile] = useState<any>(null);
   const [systemClearanceType, setSystemClearanceType] = useState("");
+  const [systemClearanceId, setSystemClearanceId] = useState("");
   const [requests, setRequests] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
   const [activeTab, setActiveTab] = useState<'form' | 'status' | 'certificate'>('form');
 
+  // Fetch user and profile
   useEffect(() => {
-    // Get user from localStorage
     const userData = localStorage.getItem("user");
     if (userData) {
       setUser(JSON.parse(userData));
-      // Fetch student profile from backend
       axios.get('/student/profile')
-        .then((res) => setStudentProfile(res.data));
+        .then((res) => {
+          console.log('Student profile:', res.data);
+          setStudentProfile(res.data);
+        })
+        .catch((err) => {
+          console.error('Failed to fetch profile:', err);
+          alert('Failed to load student profile. Please contact the administrator.');
+        });
     }
-    // Fetch clearance schedule from backend
+  }, []);
+
+  // Fetch system status
+  useEffect(() => {
     axios.get('/admin/system')
       .then((res) => {
+        console.log('System status response:', res.data);
         setSystemClearanceType(res.data.reason || "");
+        setSystemClearanceId(res.data.clearance_type_id || "");
+        if (!res.data.clearance_type_id) {
+          alert('Clearance schedule is active, but no clearance type ID is set. Please contact the administrator.');
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch system status:', err);
+        alert('Failed to fetch clearance schedule. Please try again or contact the administrator.');
       });
-    // Fetch student's clearance requests
+  }, []);
+
+  // Fetch requests
+  const fetchRequests = useCallback(() => {
     axios.get('/student/status')
       .then((res) => {
         const departmentNames = [
@@ -74,42 +83,95 @@ export default function Student() {
         ];
         const requests = (res.data || []).map(req => ({
           ...req,
-          id: req.request_id, // ensure id is set for certificate download
+          id: req.request_id,
           departments: departmentNames
-            .filter(dep => dep.key in req)
+            .filter(dep => dep.key !== 'dormitory_status' || req[dep.key] || studentProfile?.study_level === 'phd')
             .map(dep => ({
               name: dep.name,
-              status: req[dep.key] || 'pending'
+              status: dep.key === 'dormitory_status' && studentProfile?.study_level === 'phd' && !req[dep.key] ? 'skipped' : (req[dep.key] || 'pending')
             }))
         }));
+        console.log('Requests:', requests);
         setRequests(requests);
+        if (systemClearanceId && studentProfile?.student_id) {
+          setHasSubmitted(requests.some(r => r.clearance_type_id === systemClearanceId && r.student_id === studentProfile.student_id));
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch requests:', err);
+        alert('Failed to fetch clearance requests. Please try again or contact the administrator.');
       });
-  }, []);
+  }, [systemClearanceId, studentProfile?.student_id]);
 
-  // Only allow one application per schedule
-  const hasApplied = requests.some(r => r.type === systemClearanceType);
+  useEffect(() => {
+    fetchRequests();
+  }, [fetchRequests]);
 
-  const handleSubmitApplication = async () => {
+  // Compute hasApplied
+  const hasApplied = useMemo(() => {
+    return requests.some(r => r.clearance_type_id === systemClearanceId && r.student_id === studentProfile?.student_id);
+  }, [requests, systemClearanceId, studentProfile?.student_id]);
+
+  // Log hasApplied only when necessary
+  useEffect(() => {
+    console.log('hasApplied:', hasApplied, 'systemClearanceId:', systemClearanceId, 'student_id:', studentProfile?.student_id, 'hasSubmitted:', hasSubmitted);
+  }, [hasApplied, systemClearanceId, studentProfile?.student_id, hasSubmitted]);
+
+  const handleSubmitApplication = useCallback(async () => {
+    if (!systemClearanceId) {
+      alert("No active clearance schedule available or clearance type ID is missing.");
+      return;
+    }
+    if (!studentProfile?.student_id) {
+      alert("Student profile not found. Please contact the administrator to complete your profile.");
+      return;
+    }
+    if (hasApplied || hasSubmitted) {
+      alert("You have already submitted an application for this clearance schedule.");
+      return;
+    }
     setIsSubmitting(true);
     try {
-      await axios.post('/student/request', { clearance_type_id: systemClearanceType });
-      // Refresh requests
-      const res = await axios.get('/student/status');
-      setRequests(res.data.requests || []);
+      const response = await axios.post('/student/request', { clearance_type_id: systemClearanceId });
+      console.log('Submission response:', response.data);
+      const newRequest = {
+        ...response.data,
+        id: response.data.request_id,
+        clearance_type_id: systemClearanceId,
+        student_id: studentProfile.student_id,
+        type: systemClearanceType,
+        created_at: new Date().toISOString(),
+        departments: [
+          { name: 'Department Head', status: 'pending' },
+          { name: 'Librarian', status: 'pending' },
+          { name: 'Cafeteria', status: 'pending' },
+          ...(studentProfile.study_level === 'phd' ? [] : [{ name: 'Dormitory', status: 'pending' }]),
+          { name: 'Sport', status: 'pending' },
+          { name: 'Student Affair', status: 'pending' },
+          { name: 'Registrar', status: 'pending' }
+        ]
+      };
+      setRequests(prev => [...prev, newRequest]);
+      setHasSubmitted(true);
+      fetchRequests();
       alert("Clearance application submitted successfully!");
     } catch (err: any) {
-      alert(err.response?.data?.error || "Failed to submit application");
+      console.error('Submission error:', err.response?.data);
+      const errorMessage = err.response?.data?.error || "Failed to submit application. Please try again or contact the administrator.";
+      alert(errorMessage);
+      if (errorMessage.includes("already submitted")) {
+        setHasSubmitted(true);
+        fetchRequests();
+      }
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [systemClearanceId, studentProfile, hasApplied, hasSubmitted, systemClearanceType, fetchRequests]);
 
-  // Certificate download when all approved
   const handleDownloadCertificate = async (requestId: string) => {
     try {
       const res = await axios.get(`/student/certificate/${requestId}`, { responseType: 'blob' });
       if (res.headers['content-type'] !== 'application/pdf') {
-        // If not a PDF, try to read error message
         const reader = new FileReader();
         reader.onload = () => {
           alert(reader.result || 'Failed to download certificate');
@@ -117,19 +179,39 @@ export default function Student() {
         reader.readAsText(res.data);
         return;
       }
-      const url = window.URL.createObjectURL(res.data);
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       const a = document.createElement('a');
+      const request = requests.find(r => r.id === requestId);
       a.href = url;
-      a.download = `AASTU_Clearance_Certificate_${studentProfile?.studentId}_${Date.now()}.pdf`;
+      a.download = `AASTU_Clearance_Certificate_${request?.id_no || 'unknown'}_${requestId}.pdf`;
       a.click();
       window.URL.revokeObjectURL(url);
       alert('Certificate downloaded successfully!');
     } catch (err: any) {
-      if (err.response && err.response.data && err.response.data.error) {
-        alert('Certificate error: ' + err.response.data.error);
-      } else {
-        alert('Failed to download certificate');
+      console.error('Certificate download error:', err.response?.data);
+      const errorMessage = err.response?.data?.error || 'Failed to download certificate. Ensure all departments have approved the request.';
+      alert(errorMessage);
+    }
+  };
+
+  const handleViewCertificate = async (requestId: string) => {
+    try {
+      const res = await axios.get(`/student/certificate/${requestId}`, { responseType: 'blob' });
+      if (res.headers['content-type'] !== 'application/pdf') {
+        const reader = new FileReader();
+        reader.onload = () => {
+          alert(reader.result || 'Failed to view certificate');
+        };
+        reader.readAsText(res.data);
+        return;
       }
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      window.open(url, '_blank');
+      // Do not revoke URL immediately to allow viewing; browser will handle cleanup
+    } catch (err: any) {
+      console.error('Certificate view error:', err.response?.data);
+      const errorMessage = err.response?.data?.error || 'Failed to view certificate. Ensure all departments have approved the request.';
+      alert(errorMessage);
     }
   };
 
@@ -142,7 +224,7 @@ export default function Student() {
   const formatDate = (dateString: string) => {
     if (!dateString) return "";
     const date = new Date(dateString);
-    return date.toLocaleString();
+    return date.toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
   const getStatusIcon = (status: string) => {
@@ -153,6 +235,8 @@ export default function Student() {
         return <span style={{ color: 'red' }}>❌</span>;
       case "in_progress":
         return <span style={{ color: 'orange' }}>⏳</span>;
+      case "skipped":
+        return <span style={{ color: 'blue' }}>➡️</span>;
       default:
         return <span style={{ color: 'gray' }}>⏺️</span>;
     }
@@ -161,10 +245,11 @@ export default function Student() {
   const getStatusBadge = (status: string | undefined | null) => {
     if (!status) return <Badge className="bg-gray-100 text-gray-800 border-gray-200">Unknown</Badge>;
     const variants: any = {
-      approved: "bg-green-100 text-green-800 border-green-200",
+      approved: "bg-green-100 text-green-900 border-green-200",
       rejected: "bg-red-100 text-red-800 border-red-200",
       in_progress: "bg-yellow-100 text-yellow-800 border-yellow-200",
       pending: "bg-gray-100 text-gray-800 border-gray-200",
+      skipped: "bg-blue-100 text-blue-800 border-blue-200",
     };
     return (
       <Badge className={variants[status] || "bg-gray-100 text-gray-800 border-gray-200"}>
@@ -175,12 +260,11 @@ export default function Student() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <header className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex justify-between items-center">
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
-              <img src={aastuLogo} alt="AASTU Logo" className="w-15 h-1 rounded-md hidden"/>
+              <img src={aastuLogo} alt="AASTU Logo" className="w-15 h-1 rounded-md hidden" />
               <div>
                 <h1 className="text-2xl font-bold text-aastu-blue">
                   AASTU Clearance System
@@ -196,7 +280,6 @@ export default function Student() {
       </header>
 
       <div className="flex">
-        {/* Sidebar */}
         <aside className="w-64 bg-aastu-blue text-white min-h-screen flex flex-col">
           <nav className="p-6 space-y-2">
             <Button
@@ -232,7 +315,6 @@ export default function Student() {
           </nav>
         </aside>
 
-        {/* Main Content */}
         <main className="flex-1 p-6">
           <div className="w-full">
             {activeTab === "form" && (
@@ -248,7 +330,6 @@ export default function Student() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-6">
-                    {/* Clearance Type */}
                     <div className="bg-aastu-light-blue/20 p-4 rounded-lg">
                       <h3 className="text-lg font-semibold text-aastu-blue mb-2">
                         Clearance Type
@@ -262,31 +343,47 @@ export default function Student() {
                             ? systemClearanceType
                               .replace(/_/g, " ")
                               .replace(/\b\w/g, (l) => l.toUpperCase())
-                            : "General Clearance"}
+                            : "No Active Schedule"}
                         </Badge>
                       </div>
                     </div>
 
-                    {/* System Status Check */}
                     <div className="border-l-4 border-l-green-500 bg-green-50 p-4 rounded">
                       <div className="flex items-center space-x-2">
-                        <CheckCircle className="w-5 h-5 text-green-500" />
-                        <div>
-                          <p className="font-medium text-green-700">
-                            System Active
-                          </p>
-                          <p className="text-sm text-green-600">
-                            You can submit your clearance application
-                          </p>
-                        </div>
+                        {systemClearanceId && !hasApplied && !hasSubmitted ? (
+                          <>
+                            <CheckCircle className="w-5 h-5 text-green-500" />
+                            <div>
+                              <p className="font-medium text-green-700">
+                                System Active
+                              </p>
+                              <p className="text-sm text-green-600">
+                                You can submit your clearance application
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <XCircle className="w-5 h-5 text-red-500" />
+                            <div>
+                              <p className="font-medium text-red-700">
+                                Submission Unavailable
+                              </p>
+                              <p className="text-sm text-red-600">
+                                {(hasApplied || hasSubmitted)
+                                  ? "You have already submitted an application for this clearance schedule."
+                                  : "No active clearance schedule is available or clearance type ID is missing."}
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
 
-                    {/* Submit Button */}
                     <Button
                       onClick={handleSubmitApplication}
                       className="w-full bg-aastu-blue hover:bg-aastu-blue/90 h-12 text-lg"
-                      disabled={isSubmitting || !systemClearanceType || hasApplied}
+                      disabled={isSubmitting || !systemClearanceId || hasApplied || hasSubmitted}
                     >
                       {isSubmitting ? (
                         <>
@@ -301,12 +398,13 @@ export default function Student() {
                       )}
                     </Button>
 
-                    {!systemClearanceType && (
+                    {(!systemClearanceId || hasApplied || hasSubmitted) && (
                       <Alert>
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription>
-                          Clearance system is currently not accepting
-                          applications. Please contact the administration.
+                          {(hasApplied || hasSubmitted)
+                            ? "You have already applied for this clearance schedule. Check the status tab for details."
+                            : "Clearance system is currently not accepting applications or clearance type ID is missing. Please contact the administration."}
                         </AlertDescription>
                       </Alert>
                     )}
@@ -339,7 +437,6 @@ export default function Student() {
                     ) : (
                       <div className="space-y-6">
                         {requests.map((request) => {
-                          // Exclude Dormitory for PhD students
                           const isPhD = request.study_level === 'phd' || (studentProfile && studentProfile.study_level === 'phd');
                           const filteredDepartments = request.departments.filter(
                             dept => !(isPhD && dept.name.toLowerCase().includes('dormitory'))
@@ -364,14 +461,14 @@ export default function Student() {
                                     </CardDescription>
                                     <div className="mt-2 text-sm text-gray-700 font-medium flex items-center justify-between w-full">
                                       <span>Progress </span>
-                                      <span className="text-xs text-gray-700 font-semibold whitespace-nowrap">{approvedCount}  of {totalDepartments} approved</span>
+                                      <span className="text-xs text-gray-700 font-semibold whitespace-nowrap">{approvedCount} of {totalDepartments} approved</span>
                                     </div>
                                     <div className="w-full mt-1 flex items-center">
                                       <div style={{ width: '100%' }} className="relative h-3 rounded-full bg-gray-400">
                                         <div
                                           style={{
                                             width: `${progressValue}%`,
-                                            background: 'linear-gradient(90deg, #FFD700 0%, #FFC300 100%)',
+                                            background: 'linear-gradient(90deg, #FFD700 0%, #ffc300 100%)',
                                             height: '100%',
                                             borderRadius: 'inherit',
                                             transition: 'width 0.3s',
@@ -395,9 +492,7 @@ export default function Student() {
                                       <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                                         <span className="text-sm font-medium">{dept.name}</span>
                                         <div className="flex items-center space-x-1">
-                                          {dept.status.toLowerCase().trim() === "approved" && <span style={{ color: 'green' }}>✔️</span>}
-                                          {dept.status.toLowerCase().trim() === "rejected" && <span style={{ color: 'red' }}>❌</span>}
-                                          {dept.status.toLowerCase().trim() === "pending" && <span style={{ color: 'gray' }}>⏺️</span>}
+                                          {getStatusIcon(dept.status.toLowerCase().trim())}
                                           <span className="text-xs capitalize">{dept.status}</span>
                                         </div>
                                         {dept.status.toLowerCase().trim() === "rejected" && dept.comment && (
@@ -418,6 +513,7 @@ export default function Student() {
               </div>
             )}
 
+            {/* // Certificate tab rendering */}
             {activeTab === "certificate" && (
               <div className="space-y-6">
                 <Card>
@@ -427,52 +523,57 @@ export default function Student() {
                       <span>Clearance Certificate</span>
                     </CardTitle>
                     <CardDescription>
-                      Download your official clearance certificate once all
-                      departments have approved your request
+                      View or download your official clearance certificate once all departments have approved your request
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {(() => {
-                      // Only show certificate if all departments and registrar are approved (robust check)
-                      return requests
-                        .filter((request) => {
-                          const isPhD = request.study_level === 'phd' || (studentProfile && studentProfile.study_level === 'phd');
-                          const filteredDepartments = request.departments.filter(
-                            dept => !(isPhD && dept.name.toLowerCase().includes('dormitory'))
-                          );
-                          const allApproved = filteredDepartments.length > 0 && filteredDepartments.every(
-                            (dept) => (dept.status || '').toLowerCase().trim() === "approved"
-                          );
-                          return allApproved && (request.registrar_status || '').toLowerCase().trim() === "approved";
-                        })
-                        .map((request) => (
-                          <Card key={request.id} className="border-l-4 border-l-green-500">
-                            <CardHeader className="pb-3">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <CardTitle className="text-lg text-green-800">
-                                    {request.type}
-                                  </CardTitle>
-                                  <CardDescription>
-                                    Approved on {new Date(request.submittedAt).toLocaleDateString()}
-                                  </CardDescription>
-                                </div>
-                                <Badge className="bg-green-100 text-green-800 border-green-200">
-                                  Fully Approved
-                                </Badge>
+                    {requests
+                      .filter((request) => {
+                        const isPhD = request.study_level === 'phd' || (studentProfile && studentProfile.study_level === 'phd');
+                        const filteredDepartments = request.departments.filter(
+                          dept => !(isPhD && dept.name.toLowerCase().includes('dormitory'))
+                        );
+                        const allApproved = filteredDepartments.length > 0 && filteredDepartments.every(
+                          (dept) => (dept.status || '').toLowerCase().trim() === "approved"
+                        );
+                        return allApproved && (request.registrar_status || '').toLowerCase().trim() === "approved";
+                      })
+                      .map((request) => (
+                        <Card key={request.id} className="border-l-4 border-l-green-500">
+                          <CardHeader className="pb-3">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <CardTitle className="text-lg text-green-800">
+                                  {request.clearance_type}
+                                </CardTitle>
+                                <CardDescription>
+                                  ID Number: {request.id_no || 'N/A'}<br />
+                                  {/* Approved on {formatDate(request.updated_at || request.created_at)} */}
+                                  {request.certificate_created_at && (
+                                    <>
+                                      <br />
+                                      Certificate Issued on {formatDate(request.certificate_created_at)}
+                                    </>
+                                  )}
+                                </CardDescription>
                               </div>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="space-y-4">
-                                {/* Department Approvals */}
-                                <div>
-                                  <Label className="text-sm font-medium text-gray-700">
-                                    Department Approvals
-                                  </Label>
-                                  <div className="grid grid-cols-1 gap-2 mt-2">
-                                    {request.departments.filter(
+                              <Badge className="bg-green-100 text-green-800 border-green-200">
+                                Fully Approved
+                              </Badge>
+                            </div>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-4">
+                              <div>
+                                <label className="text-sm font-medium text-gray-700">
+                                  Department Approvals
+                                </label>
+                                <div className="grid grid-cols-1 gap-2 mt-2">
+                                  {request.departments
+                                    .filter(
                                       dept => !(request.study_level === 'phd' || (studentProfile && studentProfile.study_level === 'phd')) || !dept.name.toLowerCase().includes('dormitory')
-                                    ).map((dept, index) => (
+                                    )
+                                    .map((dept, index) => (
                                       <div
                                         key={index}
                                         className="flex items-center justify-between p-2 bg-green-50 rounded border border-green-200"
@@ -485,61 +586,46 @@ export default function Student() {
                                         </div>
                                       </div>
                                     ))}
-                                  </div>
-                                </div>
-                                {/* Certificate Actions */}
-                                <div className="border-t pt-4">
-                                  <div className="flex space-x-3">
-                                    <Button
-                                      className="bg-aastu-blue hover:bg-aastu-blue/90 flex-1"
-                                      onClick={async () => {
-                                        if (!request.id) {
-                                          alert("Certificate request ID is missing!");
-                                          return;
-                                        }
-                                        try {
-                                          const res = await axios.get(
-                                            `/student/certificate/${request.id}`,
-                                            {
-                                              responseType: 'blob',
-                                              headers: {
-                                                Authorization: `Bearer ${localStorage.getItem("token")}`,
-                                              },
-                                            }
-                                          );
-                                          const url = window.URL.createObjectURL(res.data);
-                                          const a = document.createElement("a");
-                                          a.href = url;
-                                          a.download = `AASTU_Clearance_Certificate_${studentProfile?.studentId}_${Date.now()}.pdf`;
-                                          a.click();
-                                          window.URL.revokeObjectURL(url);
-                                          alert("Certificate downloaded successfully!");
-                                        } catch (err) {
-                                          alert("Failed to download certificate");
-                                        }
-                                      }}
-                                    >
-                                      <FileText className="w-4 h-4 mr-2" />
-                                      Download Certificate
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      onClick={() => {
-                                        alert(
-                                          "Certificate verification feature will be available soon. Your certificate ID: " +
-                                          request.id
-                                        );
-                                      }}
-                                    >
-                                      Verify Certificate
-                                    </Button>
-                                  </div>
                                 </div>
                               </div>
-                            </CardContent>
-                          </Card>
-                        ));
-                    })()}
+                              <div className="border-t pt-4">
+                                <div className="flex space-x-3">
+                                  <Button
+                                    className="bg-aastu-blue hover:bg-aastu-blue/90 flex-1"
+                                    onClick={() => handleDownloadCertificate(request.id)}
+                                  >
+                                    <FileText className="w-4 h-4 mr-2" />
+                                    Download Certificate
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => handleViewCertificate(request.id)}
+                                  >
+                                    <FileText className="w-4 h-4 mr-2" />
+                                    View Certificate
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    {requests.filter((request) => {
+                      const isPhD = request.study_level === 'phd' || (studentProfile && studentProfile.study_level === 'phd');
+                      const filteredDepartments = request.departments.filter(
+                        dept => !(isPhD && dept.name.toLowerCase().includes('dormitory'))
+                      );
+                      return filteredDepartments.every(
+                        (dept) => (dept.status || '').toLowerCase().trim() === "approved"
+                      ) && (request.registrar_status || '').toLowerCase().trim() === "approved";
+                    }).length === 0 && (
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            No fully approved clearance requests available for certificate download.
+                          </AlertDescription>
+                        </Alert>
+                      )}
                   </CardContent>
                 </Card>
               </div>
