@@ -67,8 +67,6 @@ export default function Staff() {
     const userData = localStorage.getItem("user");
     if (userData) {
       setUser(JSON.parse(userData));
-      axios.get('/staff/profile')
-        .then((res) => setStaffProfile(res.data));
     }
     axios
       .get("/staff/requests")

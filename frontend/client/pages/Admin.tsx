@@ -25,7 +25,8 @@ import {
   LogOut,
   Clock,
   BarChart3,
-  Filter
+  Filter,
+  Upload // New icon for import
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Footer from '@/components/Footer';
@@ -55,7 +56,7 @@ interface ClearanceRequest {
 
 export default function Admin() {
   const [user, setUser] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'system'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'system' | 'import'>('overview');
   const [systemStatus, setSystemStatus] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -71,6 +72,9 @@ export default function Admin() {
   const [filterLevel, setFilterLevel] = useState<string>('all');
   const [clearanceTypes, setClearanceTypes] = useState<any[]>([]);
   const [recentRequests, setRecentRequests] = useState<ClearanceRequest[]>([]);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [importResult, setImportResult] = useState<{ message: string; errors: string[] | null } | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -101,7 +105,6 @@ export default function Admin() {
         }
         setRecentRequests([]);
       });
-    // Fetch system status from backend
     axios.get('/admin/system')
       .then(res => {
         setSystemStatus(!!res.data.is_active);
@@ -197,7 +200,6 @@ export default function Admin() {
 
   const handleSystemToggle = async (newStatus: boolean) => {
     if (newStatus) {
-      // Validate inputs
       if (!systemReason || !systemStartDate || !systemStartTime || !systemEndDate || !systemEndTime) {
         alert('Please provide a reason, start date/time, and end date/time before activating the system.');
         return;
@@ -249,6 +251,40 @@ export default function Admin() {
       } catch (err: any) {
         alert(err.response?.data?.error || 'Failed to deactivate system');
       }
+    }
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      setCsvFile(event.target.files[0]);
+      setImportResult(null);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!csvFile) {
+      alert('Please select a CSV file to import.');
+      return;
+    }
+
+    setIsImporting(true);
+    const formData = new FormData();
+    formData.append('csvFile', csvFile);
+
+    try {
+      const response = await axios.post('/admin/import-students', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportResult(response.data);
+      // Refresh students list
+      const studentsResponse = await axios.get('/admin/students');
+      setStudents(studentsResponse.data);
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to import students');
+      setImportResult({ message: 'Import failed', errors: [err.response?.data?.error || 'Server error'] });
+    } finally {
+      setIsImporting(false);
+      setCsvFile(null);
     }
   };
 
@@ -308,6 +344,17 @@ export default function Admin() {
             >
               <Settings className="w-4 h-4 mr-2" />
               System Control
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setActiveTab('import')}
+              className={`w-full rounded-lg px-3 py-3 text-sm font-medium h-12 justify-start ${activeTab === 'import'
+                ? 'bg-aastu-gold text-aastu-blue hover:bg-aastu-gold/90'
+                : 'bg-transparent text-white hover:bg-white/10 hover:text-white'
+                }`}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Import
             </Button>
           </nav>
         </aside>
@@ -396,9 +443,9 @@ export default function Admin() {
                             <th className="text-left p-3">Student</th>
                             <th className="text-left p-3">Department</th>
                             <th className="text-left p-3">Year</th>
-                            <th className="text-left p-3">Request Type</th>
-                            <th className="text-left p-3">Status</th>
-                            <th className="text-left p-3">Submitted</th>
+                              <th className="text-left p-3">Request Type</th>
+                              <th className="text-left p-3">Status</th>
+                              <th className="text-left p-3">Submitted</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -698,6 +745,70 @@ export default function Admin() {
                           : 'New clearance form submissions are disabled. Existing requests can still be processed by staff.'}
                       </AlertDescription>
                     </Alert>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Import Tab */}
+            {activeTab === 'import' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-3xl font-bold text-gray-900">Import Students</h2>
+                  <p className="text-gray-600">Upload a CSV file to import student data into the system</p>
+                </div>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center space-x-2">
+                      <Upload className="w-5 h-5 text-aastu-blue" />
+                      <span>CSV Import</span>
+                    </CardTitle>
+                    <CardDescription>
+                      Upload a CSV file containing student information. Required columns: first_name, last_name, email, id_no, department_name, study_level, year_of_study. Optional: block_no, room_no.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="csvFile">Select CSV File</Label>
+                      <Input
+                        id="csvFile"
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                      />
+                    </div>
+                    <Button
+                      onClick={handleImport}
+                      disabled={!csvFile || isImporting}
+                      className="bg-aastu-blue text-white hover:bg-aastu-blue/90"
+                    >
+                      {isImporting ? 'Importing...' : 'Import Students'}
+                    </Button>
+                    {importResult && (
+                      <Alert
+                        className={
+                          importResult.errors
+                            ? 'border-red-200 bg-red-50 text-red-700'
+                            : 'border-green-200 bg-green-50 text-green-700'
+                        }
+                      >
+                        {importResult.errors ? (
+                          <XCircle className="h-4 w-4 text-red-600" />
+                        ) : (
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                        )}
+                        <AlertDescription>
+                          <strong>{importResult.message}</strong>
+                          {importResult.errors && (
+                            <ul className="list-disc pl-4 mt-2">
+                              {importResult.errors.map((error, index) => (
+                                <li key={index}>{error}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </CardContent>
                 </Card>
               </div>

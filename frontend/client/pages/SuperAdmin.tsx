@@ -27,7 +27,8 @@ import {
   Filter,
   Settings,
   Power,
-  PowerOff
+  PowerOff,
+  Upload,
 } from 'lucide-react';
 
 interface Student {
@@ -41,26 +42,19 @@ interface Student {
   clearance_status: string;
 }
 
-interface ClearanceRequest {
-  id: string;
-  type: string;
-  status: 'pending' | 'in_progress' | 'approved' | 'rejected';
-  submittedAt: string;
-  departments: {
-    name: string;
-    status: 'pending' | 'approved' | 'rejected';
-    approvedBy?: string;
-  }[];
+interface RegistrarAdmin {
+  user_id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone?: string;
+  general_role: 'admin';
+  is_active: boolean;
 }
 
-interface RegistrarAdmin {
-  id: string;
-  name: string;
-  email: string;
-  department: string;
-  isActive: boolean;
-  createdAt: string;
-  lastLogin?: string;
+interface RoleAssignment {
+  role: 'staff';
+  department?: string;
 }
 
 export default function SuperAdmin() {
@@ -73,19 +67,21 @@ export default function SuperAdmin() {
   const [filterDepartment, setFilterDepartment] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterLevel, setFilterLevel] = useState<string>('all');
-
   const [studentIdInput, setStudentIdInput] = useState('');
   const [selectedStudentForRole, setSelectedStudentForRole] = useState<Student | null>(null);
   const [newRole, setNewRole] = useState('');
   const [newDepartment, setNewDepartment] = useState('');
-  const [studentAdditionalRoles, setStudentAdditionalRoles] = useState<Record<string, Array<{ role: string, department?: string }>>>({});
-
+  const [studentAdditionalRoles, setStudentAdditionalRoles] = useState<
+    Record<string, RoleAssignment[]>
+  >({});
   const [newAdmin, setNewAdmin] = useState({
-    name: '',
     email: '',
-    department: '',
-    password: ''
+    password: '',
   });
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
 
   useEffect(() => {
     // Get user from localStorage
@@ -93,16 +89,33 @@ export default function SuperAdmin() {
     if (userData) {
       setUser(JSON.parse(userData));
     }
+
     // Fetch students from backend
-    axios.get('/admin/students')
+    axios
+      .get('/admin/students', {
+        headers: { Authorization: `Bearer ${user?.token}` },
+      })
       .then((res) => setStudents(res.data))
-      .catch(() => setStudents([]));
-    // Fetch current registrar admin from backend
-    // axios.get('/admin/registrar')
-    //   .then((res) => {
-    //     setCurrentRegistrarAdmin(res.data || null);
-    //   });
-  }, []);
+      .catch((err) => {
+        console.error('Error fetching students:', err);
+        setStudents([]);
+      });
+
+    // Fetch current registrar admin (general_role: 'admin')
+    axios
+      .get('/admin/registrar-profile', {
+        headers: { Authorization: `Bearer ${user?.token}` },
+      })
+      .then((res) => {
+        setCurrentRegistrarAdmin(res.data);
+        setAdminError(null);
+      })
+      .catch((err) => {
+        console.error('Error fetching registrar admin:', err);
+        setCurrentRegistrarAdmin(null);
+        setAdminError(err.response?.data?.error || 'Failed to fetch registrar admin');
+      });
+  }, [user?.token]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -122,48 +135,146 @@ export default function SuperAdmin() {
       approved: 'bg-green-100 text-green-800 border-green-200',
       rejected: 'bg-red-100 text-red-800 border-red-200',
       in_progress: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      pending: 'bg-gray-100 text-gray-800 border-gray-200'
+      pending: 'bg-gray-100 text-gray-800 border-gray-200',
     };
-
     return <Badge className={variants[status as keyof typeof variants]}>{status.replace('_', ' ')}</Badge>;
   };
 
-  const handleChangeAdmin = () => {
-    if (!newAdmin.name || !newAdmin.email || !newAdmin.password) {
+  const handleChangeAdmin = async () => {
+    if (!newAdmin.email || !newAdmin.password) {
       alert('Please fill in all fields');
       return;
     }
 
-    const newAdminData: RegistrarAdmin = {
-      id: `admin_${Date.now()}`,
-      name: newAdmin.name,
-      email: newAdmin.email,
-      department: 'Registrar Office',
-      isActive: true,
-      createdAt: new Date().toISOString()
-    };
+    try {
+      // Assign 'admin' role to the new user
+      const response = await axios.post(
+        '/admin/roles',
+        {
+          email: newAdmin.email,
+          general_role: 'admin',
+          password: newAdmin.password,
+        },
+        {
+          headers: { Authorization: `Bearer ${user?.token}` },
+        }
+      );
 
-    setCurrentRegistrarAdmin(newAdminData);
-    setNewAdmin({ name: '', email: '', department: '', password: '' });
-    setIsChangeAdminOpen(false);
-    alert('Registrar admin changed successfully!');
+      // Update current registrar admin with the new admin's details
+      setCurrentRegistrarAdmin(response.data.user);
+      setNewAdmin({ email: '', password: '' });
+      setIsChangeAdminOpen(false);
+      alert('Registrar admin changed successfully!');
+    } catch (err: any) {
+      console.error('Error changing registrar admin:', err);
+      alert(err.response?.data?.error || 'Failed to change registrar admin');
+    }
   };
 
-  const toggleAdminStatus = () => {
+  const toggleAdminStatus = async () => {
     if (currentRegistrarAdmin) {
-      setCurrentRegistrarAdmin(prev => prev ? {
-        ...prev,
-        isActive: !prev.isActive
-      } : null);
+      try {
+        await axios.put(
+          `/admin/roles/${currentRegistrarAdmin.user_id}`,
+          {
+            is_active: !currentRegistrarAdmin.is_active,
+          },
+          {
+            headers: { Authorization: `Bearer ${user?.token}` },
+          }
+        );
+        setCurrentRegistrarAdmin((prev) =>
+          prev ? { ...prev, is_active: !prev.is_active } : null
+        );
+      } catch (err: any) {
+        console.error('Error toggling admin status:', err);
+        alert(err.response?.data?.error || 'Failed to toggle admin status');
+      }
+    }
+  };
+
+  const handleImportStudents = async () => {
+    if (!csvFile) {
+      setImportError('Please select a CSV file to upload');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('csvFile', csvFile);
+
+    try {
+      const response = await axios.post('/admin/import-students', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          Authorization: `Bearer ${user?.token}`,
+        },
+      });
+      setImportSuccess(response.data.message);
+      setImportError(null);
+      setCsvFile(null);
+      // Refresh students list
+      const studentsRes = await axios.get('/admin/students', {
+        headers: { Authorization: `Bearer ${user?.token}` },
+      });
+      setStudents(studentsRes.data);
+    } catch (err: any) {
+      console.error('Import students error:', err);
+      setImportError(err.response?.data?.error || 'Failed to import students');
+      setImportSuccess(null);
+    }
+  };
+
+  const handleAssignRole = async () => {
+    if (selectedStudentForRole && newRole === 'staff' && newDepartment) {
+      const student_id = String(selectedStudentForRole.student_id);
+      try {
+        await axios.post(
+          '/admin/roles',
+          {
+            user_id: selectedStudentForRole.student_id,
+            general_role: 'staff',
+            specific_role: newDepartment,
+          },
+          {
+            headers: { Authorization: `Bearer ${user?.token}` },
+          }
+        );
+
+        setStudentAdditionalRoles((prev) => {
+          const existing = prev[student_id] || [];
+          const roleExists = existing.some(
+            (r) => r.role === 'staff' && r.department === newDepartment
+          );
+          if (roleExists) {
+            alert(`Student already has the staff role in ${newDepartment}`);
+            return prev;
+          }
+          return {
+            ...prev,
+            [student_id]: [...existing, { role: 'staff', department: newDepartment }],
+          };
+        });
+
+        alert(
+          `Staff role in ${newDepartment} assigned to ${selectedStudentForRole.first_name} ${selectedStudentForRole.last_name}`
+        );
+        setStudentIdInput('');
+        setSelectedStudentForRole(null);
+        setNewRole('');
+        setNewDepartment('');
+      } catch (err: any) {
+        console.error('Assign role error:', err);
+        alert(err.response?.data?.error || 'Failed to assign role');
+      }
     }
   };
 
   // Get unique departments for filter dropdown
-  const departments = Array.from(new Set(students.map(s => s.department_name))).filter(Boolean);
+  const departments = Array.from(new Set(students.map((s) => s.department_name))).filter(Boolean);
 
   // Filtering logic for flat student objects
   const filteredStudents = students.filter(
-    s =>
+    (s) =>
       (filterYear === 'all' || String(s.year_of_study) === filterYear) &&
       (filterDepartment === 'all' || s.department_name === filterDepartment) &&
       (filterLevel === 'all' || s.study_level === filterLevel) &&
@@ -172,8 +283,7 @@ export default function SuperAdmin() {
 
   const getOverviewStats = () => {
     const totalStudents = students.length;
-    // If you want to count requests, you need to fetch them separately or add them to Student interface
-    const totalRequests = 0;
+    const totalRequests = 0; // Update if requests are fetched
     const approvedRequests = 0;
     const pendingRequests = 0;
     const rejectedRequests = 0;
@@ -184,8 +294,10 @@ export default function SuperAdmin() {
       approvedRequests,
       pendingRequests,
       rejectedRequests,
-      adminStatus: currentRegistrarAdmin?.isActive ? 'Active' : 'Inactive',
-      adminName: currentRegistrarAdmin?.name || 'No Admin Assigned'
+      adminName: currentRegistrarAdmin
+        ? `${currentRegistrarAdmin.first_name} ${currentRegistrarAdmin.last_name}`
+        : 'No Admin Assigned',
+      adminStatus: currentRegistrarAdmin?.is_active ? 'Active' : 'Inactive',
     };
   };
 
@@ -219,8 +331,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('overview')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'overview'
-                ? 'bg-white text-purple-600 hover:bg-white/90'
-                : 'bg-purple-600/20 text-white hover:bg-white/20'
+                  ? 'bg-white text-purple-600 hover:bg-white/90'
+                  : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <BarChart3 className="w-4 h-4 mr-2" />
@@ -230,8 +342,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('students')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'students'
-                ? 'bg-white text-purple-600 hover:bg-white/90'
-                : 'bg-purple-600/20 text-white hover:bg-white/20'
+                  ? 'bg-white text-purple-600 hover:bg-white/90'
+                  : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <Users className="w-4 h-4 mr-2" />
@@ -241,8 +353,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('accounts')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'accounts'
-                ? 'bg-white text-purple-600 hover:bg-white/90'
-                : 'bg-purple-600/20 text-white hover:bg-white/20'
+                  ? 'bg-white text-purple-600 hover:bg-white/90'
+                  : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <UserPlus className="w-4 h-4 mr-2" />
@@ -252,12 +364,23 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('admin')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'admin'
-                ? 'bg-white text-purple-600 hover:bg-white/90'
-                : 'bg-purple-600/20 text-white hover:bg-white/20'
+                  ? 'bg-white text-purple-600 hover:bg-white/90'
+                  : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <Shield className="w-4 h-4 mr-2" />
               Registrar Admin
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setActiveTab('import')}
+              className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'import'
+                  ? 'bg-white text-purple-600 hover:bg-white/90'
+                  : 'bg-purple-600/20 text-white hover:bg-white/20'
+                }`}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Import Students
             </Button>
           </nav>
         </aside>
@@ -337,29 +460,46 @@ export default function SuperAdmin() {
                   <CardDescription>Currently assigned registrar administrator</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="flex space-x-8">
-                      <div>
-                        <p className="text-sm text-gray-600">Admin Name</p>
-                        <p className="text-xl font-bold text-gray-900">{stats.adminName}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600">Status</p>
-                        <Badge className={currentRegistrarAdmin?.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                          {stats.adminStatus}
-                        </Badge>
-                      </div>
-                      {currentRegistrarAdmin && (
+                  {adminError ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>{adminError}</AlertDescription>
+                    </Alert>
+                  ) : currentRegistrarAdmin ? (
+                    <div className="flex items-center justify-between">
+                      <div className="flex space-x-8">
+                        <div>
+                          <p className="text-sm text-gray-600">Admin Name</p>
+                          <p className="text-xl font-bold text-gray-900">
+                            {currentRegistrarAdmin.first_name} {currentRegistrarAdmin.last_name}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Status</p>
+                          <Badge
+                            className={
+                              currentRegistrarAdmin.is_active
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-red-100 text-red-800'
+                            }
+                          >
+                            {currentRegistrarAdmin.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </div>
                         <div>
                           <p className="text-sm text-gray-600">Email</p>
                           <p className="text-sm text-gray-900">{currentRegistrarAdmin.email}</p>
                         </div>
-                      )}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-600">No registrar admin assigned.</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
-
             </div>
           )}
 
@@ -409,8 +549,10 @@ export default function SuperAdmin() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Departments</SelectItem>
-                          {departments.map(dept => (
-                            <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                          {departments.map((dept) => (
+                            <SelectItem key={dept} value={dept}>
+                              {dept}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -469,10 +611,12 @@ export default function SuperAdmin() {
                         </tr>
                       </thead>
                       <tbody>
-                        {(Array.isArray(filteredStudents) && filteredStudents.length > 0) ? (
-                          filteredStudents.map(student => (
+                        {Array.isArray(filteredStudents) && filteredStudents.length > 0 ? (
+                          filteredStudents.map((student) => (
                             <tr key={student.student_id} className="border-b hover:bg-gray-50">
-                              <td className="p-3">{student.first_name} {student.last_name}</td>
+                              <td className="p-3">
+                                {student.first_name} {student.last_name}
+                              </td>
                               <td className="p-3">{student.id_no}</td>
                               <td className="p-3">{student.department_name}</td>
                               <td className="p-3">{student.year_of_study}</td>
@@ -482,7 +626,9 @@ export default function SuperAdmin() {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={6} className="p-3 text-center text-gray-400">No students found.</td>
+                            <td colSpan={6} className="p-3 text-center text-gray-400">
+                              No students found.
+                            </td>
                           </tr>
                         )}
                       </tbody>
@@ -507,13 +653,13 @@ export default function SuperAdmin() {
                 <CardHeader>
                   <CardTitle>Role Assignment</CardTitle>
                   <CardDescription>
-                    Assign additional roles to existing students in the system
+                    Assign additional staff roles to existing students in the system
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div>
-                      <h4 className="font-semibold mb-4">Assign Additional Role to Student</h4>
+                      <h4 className="font-semibold mb-4">Assign Staff Role to Student</h4>
                       <div className="space-y-4">
                         <div>
                           <Label>Student ID</Label>
@@ -521,8 +667,9 @@ export default function SuperAdmin() {
                             value={studentIdInput}
                             onChange={(e) => {
                               setStudentIdInput(e.target.value);
-                              // Find student by ID
-                              const foundStudent = students.find(s => String(s.student_id) === e.target.value);
+                              const foundStudent = students.find(
+                                (s) => String(s.student_id) === e.target.value
+                              );
                               setSelectedStudentForRole(foundStudent || null);
                             }}
                             placeholder="Enter student ID (e.g., ETS0192/14)"
@@ -532,21 +679,25 @@ export default function SuperAdmin() {
                         {selectedStudentForRole && (
                           <div className="p-3 bg-blue-50 rounded-lg border">
                             <h5 className="font-medium text-blue-800">Selected Student:</h5>
-                            <p className="text-sm">{selectedStudentForRole.first_name} {selectedStudentForRole.last_name}</p>
+                            <p className="text-sm">
+                              {selectedStudentForRole.first_name} {selectedStudentForRole.last_name}
+                            </p>
                             <p className="text-xs text-gray-600">ID: {selectedStudentForRole.id_no}</p>
-                            <p className="text-xs text-gray-600">Department: {selectedStudentForRole.department_name} - Year: {selectedStudentForRole.year_of_study}</p>
+                            <p className="text-xs text-gray-600">
+                              Department: {selectedStudentForRole.department_name} - Year:{' '}
+                              {selectedStudentForRole.year_of_study}
+                            </p>
                           </div>
                         )}
 
                         <div>
-                          <Label>Assign Additional Role</Label>
+                          <Label>Assign Role</Label>
                           <Select value={newRole} onValueChange={setNewRole}>
                             <SelectTrigger>
-                              <SelectValue placeholder="Select additional role" />
+                              <SelectValue placeholder="Select role" />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="staff">Staff</SelectItem>
-                              <SelectItem value="admin">Registrar Admin</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -578,133 +729,87 @@ export default function SuperAdmin() {
 
                         <Button
                           className="w-full bg-purple-600 hover:bg-purple-700"
-                          disabled={!selectedStudentForRole || !newRole || (newRole === 'staff' && !newDepartment)}
-                          onClick={() => {
-                            if (selectedStudentForRole && newRole) {
-                              const student_id = String(selectedStudentForRole.student_id);
-                              const newRoleAssignment = {
-                                role: newRole,
-                                department: newRole === 'staff' ? newDepartment : undefined
-                              };
-
-                              setStudentAdditionalRoles(prev => {
-                                const existing = prev[student_id] || [];
-                                // Check if role already exists
-                                const roleExists = existing.some(r => r.role === newRole && r.department === newRoleAssignment.department);
-                                if (roleExists) {
-                                  alert(`Student already has the ${newRole} role${newRole === 'staff' ? ` in ${newDepartment}` : ''}`);
-                                  return prev;
-                                }
-                                return {
-                                  ...prev,
-                                  [student_id]: [...existing, newRoleAssignment]
-                                };
-                              });
-
-                              alert(`Additional role "${newRole}" ${newRole === 'staff' ? `in ${newDepartment}` : ''} assigned to ${selectedStudentForRole.first_name} ${selectedStudentForRole.last_name}`);
-                              setStudentIdInput('');
-                              setSelectedStudentForRole(null);
-                              setNewRole('');
-                              setNewDepartment('');
-                            }
-                          }}
+                          disabled={!selectedStudentForRole || !newRole || !newDepartment}
+                          onClick={handleAssignRole}
                         >
-                          Assign Additional Role
+                          Assign Staff Role
                         </Button>
                       </div>
                     </div>
 
                     <div>
-                      <h4 className="font-semibold mb-4">Students with Additional Roles ({Object.keys(studentAdditionalRoles).length} students have additional roles)</h4>
+                      <h4 className="font-semibold mb-4">
+                        Students with Additional Roles (
+                        {Object.keys(studentAdditionalRoles).length} students)
+                      </h4>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {/* Display students with their current roles */}
-                        {students.map(student => {
-                          const additionalRoles = studentAdditionalRoles[String(student.student_id)] || [];
-                          return (
-                            <div key={student.student_id} className="p-3 border rounded-lg">
-                              <div className="flex justify-between items-center">
-                                <div>
-                                  <p className="font-medium">{student.first_name} {student.last_name}</p>
-                                  <p className="text-sm text-gray-600">ID: {student.id_no}</p>
-                                  <p className="text-xs text-gray-500">{student.department_name}</p>
-                                  <div className="mt-1 space-x-1 space-y-1">
-                                    <Badge className="bg-green-100 text-green-800">Student</Badge>
-                                    {additionalRoles.map((roleAssignment, index) => (
-                                      <Badge
-                                        key={index}
-                                        className={`${roleAssignment.role === 'staff'
-                                          ? 'bg-blue-100 text-blue-800'
-                                          : 'bg-red-100 text-red-800'
-                                          }`}
-                                      >
-                                        {roleAssignment.role === 'staff'
-                                          ? `Staff (${roleAssignment.department})`
-                                          : 'Registrar Admin'
-                                        }
-                                      </Badge>
-                                    ))}
+                        {Object.keys(studentAdditionalRoles).length > 0 ? (
+                          students
+                            .filter((student) => studentAdditionalRoles[String(student.student_id)])
+                            .map((student) => {
+                              const additionalRoles = studentAdditionalRoles[String(student.student_id)] || [];
+                              return (
+                                <div key={student.student_id} className="p-3 border rounded-lg">
+                                  <div className="flex justify-between items-center">
+                                    <div>
+                                      <p className="font-medium">
+                                        {student.first_name} {student.last_name}
+                                      </p>
+                                      <p className="text-sm text-gray-600">ID: {student.id_no}</p>
+                                      <p className="text-xs text-gray-500">{student.department_name}</p>
+                                      <div className="mt-1 space-x-1 space-y-1">
+                                        <Badge className="bg-green-100 text-green-800">Student</Badge>
+                                        {additionalRoles.map((roleAssignment, index) => (
+                                          <Badge
+                                            key={index}
+                                            className="bg-blue-100 text-blue-800"
+                                          >
+                                            Staff ({roleAssignment.department})
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <div className="text-right">
+                                      <p className="text-xs text-gray-500">
+                                        Year: {student.year_of_study}
+                                      </p>
+                                      {additionalRoles.length > 0 && (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="mt-1 text-xs"
+                                          onClick={() => {
+                                            if (
+                                              window.confirm(
+                                                `Remove all additional roles for ${student.first_name} ${student.last_name}?`
+                                              )
+                                            ) {
+                                              setStudentAdditionalRoles((prev) => {
+                                                const updated = { ...prev };
+                                                delete updated[String(student.student_id)];
+                                                return updated;
+                                              });
+                                            }
+                                          }}
+                                        >
+                                          Remove Roles
+                                        </Button>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="text-right">
-                                  <p className="text-xs text-gray-500">Year: {student.year_of_study}</p>
-                                  {additionalRoles.length > 0 && (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="mt-1 text-xs"
-                                      onClick={() => {
-                                        if (window.confirm(`Remove all additional roles for ${student.first_name} ${student.last_name}?`)) {
-                                          setStudentAdditionalRoles(prev => {
-                                            const updated = { ...prev };
-                                            delete updated[String(student.student_id)];
-                                            return updated;
-                                          });
-                                        }
-                                      }}
-                                    >
-                                      Remove Roles
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* Display existing staff */}
-                        <div className="p-3 border rounded-lg bg-blue-50">
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <p className="font-medium">Dr. Tsegaye Alemayehu</p>
-                              <p className="text-sm text-gray-600">tsegaye.alemayehu@aastu.edu.et</p>
-                              <p className="text-xs text-gray-500">Registrar Office</p>
-                              <Badge className="mt-1 bg-purple-100 text-purple-800">Super Admin</Badge>
-                            </div>
-                            <div className="text-right">
-                              <Button variant="outline" size="sm" disabled>
-                                <Shield className="w-3 h-3 mr-1" />
-                                Protected
-                              </Button>
-                            </div>
+                              );
+                            })
+                        ) : (
+                          <div className="text-center py-4 text-gray-500">
+                            No students with additional roles.
                           </div>
-                        </div>
-
-                        <div className="p-3 border rounded-lg bg-red-50">
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <p className="font-medium">Alemayehu Tadesse</p>
-                              <p className="text-sm text-gray-600">alemayehu.tadesse@aastu.edu.et</p>
-                              <p className="text-xs text-gray-500">Registrar Office</p>
-                              <Badge className="mt-1 bg-red-100 text-red-800">Registrar Admin</Badge>
-                            </div>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
-
             </div>
           )}
 
@@ -726,26 +831,17 @@ export default function SuperAdmin() {
                     <DialogHeader>
                       <DialogTitle>Change Registrar Admin</DialogTitle>
                       <DialogDescription>
-                        Replace the current registrar administrator with a new one
+                        Assign a new user as the registrar administrator
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="name">Full Name</Label>
-                        <Input
-                          id="name"
-                          value={newAdmin.name}
-                          onChange={(e) => setNewAdmin(prev => ({ ...prev, name: e.target.value }))}
-                          placeholder="Enter full name"
-                        />
-                      </div>
                       <div>
                         <Label htmlFor="email">Email</Label>
                         <Input
                           id="email"
                           type="email"
                           value={newAdmin.email}
-                          onChange={(e) => setNewAdmin(prev => ({ ...prev, email: e.target.value }))}
+                          onChange={(e) => setNewAdmin((prev) => ({ ...prev, email: e.target.value }))}
                           placeholder="Enter email address"
                         />
                       </div>
@@ -755,7 +851,7 @@ export default function SuperAdmin() {
                           id="password"
                           type="password"
                           value={newAdmin.password}
-                          onChange={(e) => setNewAdmin(prev => ({ ...prev, password: e.target.value }))}
+                          onChange={(e) => setNewAdmin((prev) => ({ ...prev, password: e.target.value }))}
                           placeholder="Enter initial password"
                         />
                       </div>
@@ -763,7 +859,10 @@ export default function SuperAdmin() {
                         <Button variant="outline" onClick={() => setIsChangeAdminOpen(false)}>
                           Cancel
                         </Button>
-                        <Button onClick={handleChangeAdmin} className="bg-purple-600 hover:bg-purple-700">
+                        <Button
+                          onClick={handleChangeAdmin}
+                          className="bg-purple-600 hover:bg-purple-700"
+                        >
                           Change Admin
                         </Button>
                       </div>
@@ -781,13 +880,20 @@ export default function SuperAdmin() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {currentRegistrarAdmin ? (
+                  {adminError ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>{adminError}</AlertDescription>
+                    </Alert>
+                  ) : currentRegistrarAdmin ? (
                     <div className="space-y-6">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-4">
                           <div>
                             <Label className="text-sm text-gray-600">Full Name</Label>
-                            <p className="text-lg font-medium">{currentRegistrarAdmin.name}</p>
+                            <p className="text-lg font-medium">
+                              {currentRegistrarAdmin.first_name} {currentRegistrarAdmin.last_name}
+                            </p>
                           </div>
                           <div>
                             <Label className="text-sm text-gray-600">Email Address</Label>
@@ -798,14 +904,16 @@ export default function SuperAdmin() {
                           <div>
                             <Label className="text-sm text-gray-600">Status</Label>
                             <div className="flex items-center space-x-2">
-                              <Badge className={currentRegistrarAdmin.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                                {currentRegistrarAdmin.isActive ? 'Active' : 'Inactive'}
+                              <Badge
+                                className={
+                                  currentRegistrarAdmin.is_active
+                                    ? 'bg-green-100 text-green-800'
+                                    : 'bg-red-100 text-red-800'
+                                }
+                              >
+                                {currentRegistrarAdmin.is_active ? 'Active' : 'Inactive'}
                               </Badge>
                             </div>
-                          </div>
-                          <div>
-                            <Label className="text-sm text-gray-600">Account Created</Label>
-                            <p className="text-gray-900">{new Date(currentRegistrarAdmin.createdAt).toLocaleDateString()}</p>
                           </div>
                         </div>
                       </div>
@@ -814,9 +922,13 @@ export default function SuperAdmin() {
                         <Button
                           variant="outline"
                           onClick={toggleAdminStatus}
-                          className={currentRegistrarAdmin.isActive ? 'text-red-600 border-red-200' : 'text-green-600 border-green-200'}
+                          className={
+                            currentRegistrarAdmin.is_active
+                              ? 'text-red-600 border-red-200'
+                              : 'text-green-600 border-green-200'
+                          }
                         >
-                          {currentRegistrarAdmin.isActive ? (
+                          {currentRegistrarAdmin.is_active ? (
                             <>
                               <PowerOff className="w-4 h-4 mr-2" />
                               Deactivate Admin
@@ -833,8 +945,12 @@ export default function SuperAdmin() {
                   ) : (
                     <div className="text-center py-8">
                       <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">No Registrar Admin Assigned</h3>
-                      <p className="text-gray-600 mb-4">There is currently no registrar administrator assigned to the system.</p>
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">
+                        No Registrar Admin Assigned
+                      </h3>
+                      <p className="text-gray-600 mb-4">
+                        There is currently no registrar administrator assigned to the system.
+                      </p>
                       <Button
                         onClick={() => setIsChangeAdminOpen(true)}
                         className="bg-purple-600 hover:bg-purple-700"
@@ -848,11 +964,68 @@ export default function SuperAdmin() {
               </Card>
             </div>
           )}
+
+          {activeTab === 'import' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-3xl font-bold text-gray-900">Import Students</h2>
+                <p className="text-gray-600">Upload a CSV file to import student data</p>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Upload Student Data</CardTitle>
+                  <CardDescription>
+                    Upload a CSV file containing student information. The file should include columns:
+                    first_name, last_name, email, id_no, department_name, study_level,
+                    year_of_study, block_no (optional), room_no (optional).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="csvFile">Select CSV File</Label>
+                      <Input
+                        id="csvFile"
+                        type="file"
+                        accept=".csv"
+                        onChange={(e) => {
+                          const file = e.target.files ? e.target.files[0] : null;
+                          setCsvFile(file);
+                          setImportError(null);
+                          setImportSuccess(null);
+                        }}
+                      />
+                    </div>
+                    {importError && (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{importError}</AlertDescription>
+                      </Alert>
+                    )}
+                    {importSuccess && (
+                      <Alert>
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                        <AlertDescription>{importSuccess}</AlertDescription>
+                      </Alert>
+                    )}
+                    <Button
+                      className="bg-purple-600 hover:bg-purple-700"
+                      onClick={handleImportStudents}
+                      disabled={!csvFile}
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      Import Students
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </main>
       </div>
 
       <Footer />
-
     </div>
   );
 }
