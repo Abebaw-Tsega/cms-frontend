@@ -390,12 +390,6 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
                   </div>
                 </div>
                 <div>
-                  <Label className="text-sm text-gray-600">Phone</Label>
-                  <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                    <span className="text-sm text-gray-900">{extraInfo.phone || "Not specified"}</span>
-                  </div>
-                </div>
-                <div>
                   <Label className="text-sm text-gray-600">Role</Label>
                   <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
                     <span
@@ -427,30 +421,6 @@ export default function ProfileDropdown({ user }: ProfileDropdownProps) {
                     </div>
                   </>
                 )}
-                {/* {user.role === "staff" && (
-                  <>
-                    <div>
-                      <Label className="text-sm text-gray-600">General Role</Label>
-                      <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                        <span className="text-sm text-gray-900">
-                          {extraInfo.general_role || "Not specified"}
-                        </span>
-                      </div>
-                    </div>
-                  </>
-                )}
-                {(user.role === "admin" || user.role === "superadmin") && (
-                  <>
-                    <div>
-                      <Label className="text-sm text-gray-600">General Role</Label>
-                      <div className="mt-1 p-3 bg-gray-50 rounded-lg border">
-                        <span className="text-sm text-gray-900">
-                          {extraInfo.general_role || "Not specified"}
-                        </span>
-                      </div>
-                    </div>
-                  </>
-                )} */}
               </div>
             </div>
 

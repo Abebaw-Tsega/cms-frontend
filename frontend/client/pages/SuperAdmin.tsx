@@ -23,12 +23,10 @@ import {
   AlertCircle,
   Trash2,
   Edit,
-  Download,
-  Filter,
-  Settings,
+  Upload,
   Power,
   PowerOff,
-  Upload,
+  Filter,
 } from 'lucide-react';
 
 interface Student {
@@ -47,20 +45,54 @@ interface RegistrarAdmin {
   first_name: string;
   last_name: string;
   email: string;
-  phone?: string;
   general_role: 'admin';
-  is_active: boolean;
+  is_active: number;
 }
 
 interface RoleAssignment {
-  role: 'staff';
-  department?: string;
+  general_role: string;
+  specific_role?: string | null;
+}
+
+interface RequestStats {
+  totalRequests: number;
+  approvedRequests: number;
+  pendingRequests: number;
+  rejectedRequests: number;
+}
+interface ClearanceRequest {
+  request_id: string;
+  type_name: string;
+  overall_status: 'pending' | 'in_progress' | 'approved' | 'rejected';
+  created_at: string;
+  first_name: string;
+  last_name: string;
+  department_name: string;
+  year_of_study: number;
+}
+
+interface Department {
+  department_id: number;
+  department_name: string;
+}
+
+interface Block {
+  block_id: number;
+  block_no: string;
 }
 
 export default function SuperAdmin() {
   const [user, setUser] = useState<any>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [currentRegistrarAdmin, setCurrentRegistrarAdmin] = useState<RegistrarAdmin | null>(null);
+  const [requestStats, setRequestStats] = useState<RequestStats>({
+    totalRequests: 0,
+    approvedRequests: 0,
+    pendingRequests: 0,
+    rejectedRequests: 0,
+  });
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [blocks, setBlocks] = useState<Block[]>([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [isChangeAdminOpen, setIsChangeAdminOpen] = useState(false);
   const [filterYear, setFilterYear] = useState<string>('all');
@@ -70,7 +102,9 @@ export default function SuperAdmin() {
   const [studentIdInput, setStudentIdInput] = useState('');
   const [selectedStudentForRole, setSelectedStudentForRole] = useState<Student | null>(null);
   const [newRole, setNewRole] = useState('');
-  const [newDepartment, setNewDepartment] = useState('');
+  const [recentRequests, setRecentRequests] = useState<ClearanceRequest[]>([]);
+  const [newGeneralRole, setNewGeneralRole] = useState('');
+  const [newSpecificRole, setNewSpecificRole] = useState('');
   const [studentAdditionalRoles, setStudentAdditionalRoles] = useState<
     Record<string, RoleAssignment[]>
   >({});
@@ -88,32 +122,85 @@ export default function SuperAdmin() {
     const userData = localStorage.getItem('user');
     if (userData) {
       setUser(JSON.parse(userData));
-    }
+      console.log('Initial data:', { students, departments, blocks });
+        console.log('Current state:', {
+          studentIdInput,
+          selectedStudentForRole,
+          newGeneralRole,
+          newSpecificRole,
+        });
+      } [studentIdInput, selectedStudentForRole, newGeneralRole, newSpecificRole, students, departments, blocks];
 
-    // Fetch students from backend
+
+    // Fetch students
     axios
       .get('/admin/students', {
         headers: { Authorization: `Bearer ${user?.token}` },
       })
-      .then((res) => setStudents(res.data))
+      .then((res) => {
+        console.log('Students fetched:', res.data);
+        setStudents(res.data);
+      })
       .catch((err) => {
         console.error('Error fetching students:', err);
         setStudents([]);
       });
 
-    // Fetch current registrar admin (general_role: 'admin')
+    // Fetch recent clearance requests
+    axios.get('/admin/data')
+          .then((res) => setRecentRequests(res.data))
+          .catch((err) => {
+            console.error('Failed to fetch clearance data:', err);
+            if (err.response?.status === 403) {
+              alert('You do not have permission to view clearance data.');
+            }
+            setRecentRequests([]);
+          });
+
+    // Fetch registrar admin
     axios
       .get('/admin/registrar-profile', {
         headers: { Authorization: `Bearer ${user?.token}` },
       })
       .then((res) => {
-        setCurrentRegistrarAdmin(res.data);
+        console.log('Registrar admin response:', res.data);
+        // Handle array response by taking the first active admin
+        const admin = Array.isArray(res.data) && res.data.length > 0 ? res.data[0] : null;
+        setCurrentRegistrarAdmin(admin);
         setAdminError(null);
       })
       .catch((err) => {
         console.error('Error fetching registrar admin:', err);
         setCurrentRegistrarAdmin(null);
         setAdminError(err.response?.data?.error || 'Failed to fetch registrar admin');
+      });
+
+    // Fetch departments
+    axios
+      .get('/admin/departments', {
+        headers: { Authorization: `Bearer ${user?.token}` },
+      })
+      .then((res) => {
+        console.log('Departments fetched:', res.data);
+        setDepartments(res.data);
+      })
+      .catch((err) => {
+        console.error('Error fetching departments:', err);
+        setDepartments([]);
+      });
+
+    // Fetch blocks
+    axios
+      .get('/admin/blocks', {
+        headers: { Authorization: `Bearer ${user?.token}` },
+      })
+      .then((res) => {
+        console.log('Blocks fetched:', res.data);
+        setBlocks(res.data);
+      })
+      .catch((err) => {
+        console.error('Error fetching blocks:', err);
+        setBlocks([]);
       });
   }, [user?.token]);
 
@@ -147,7 +234,6 @@ export default function SuperAdmin() {
     }
 
     try {
-      // Assign 'admin' role to the new user
       const response = await axios.post(
         '/admin/roles',
         {
@@ -159,8 +245,7 @@ export default function SuperAdmin() {
           headers: { Authorization: `Bearer ${user?.token}` },
         }
       );
-
-      // Update current registrar admin with the new admin's details
+      console.log('Change admin response:', response.data);
       setCurrentRegistrarAdmin(response.data.user);
       setNewAdmin({ email: '', password: '' });
       setIsChangeAdminOpen(false);
@@ -184,8 +269,9 @@ export default function SuperAdmin() {
           }
         );
         setCurrentRegistrarAdmin((prev) =>
-          prev ? { ...prev, is_active: !prev.is_active } : null
+          prev ? { ...prev, is_active: prev.is_active ? 0 : 1 } : null
         );
+        alert('Admin status updated successfully!');
       } catch (err: any) {
         console.error('Error toggling admin status:', err);
         alert(err.response?.data?.error || 'Failed to toggle admin status');
@@ -209,10 +295,10 @@ export default function SuperAdmin() {
           Authorization: `Bearer ${user?.token}`,
         },
       });
+      console.log('Import students response:', response.data);
       setImportSuccess(response.data.message);
       setImportError(null);
       setCsvFile(null);
-      // Refresh students list
       const studentsRes = await axios.get('/admin/students', {
         headers: { Authorization: `Bearer ${user?.token}` },
       });
@@ -225,54 +311,67 @@ export default function SuperAdmin() {
   };
 
   const handleAssignRole = async () => {
-    if (selectedStudentForRole && newRole === 'staff' && newDepartment) {
-      const student_id = String(selectedStudentForRole.student_id);
-      try {
-        await axios.post(
-          '/admin/roles',
-          {
-            user_id: selectedStudentForRole.student_id,
-            general_role: 'staff',
-            specific_role: newDepartment,
-          },
-          {
-            headers: { Authorization: `Bearer ${user?.token}` },
-          }
-        );
+    console.log('handleAssignRole called with:', { selectedStudentForRole, newGeneralRole, newSpecificRole });
+    if (!selectedStudentForRole || !newGeneralRole) {
+      console.log('Validation failed: Missing student or role');
+      alert('Please select a student and a role');
+      return;
+    }
+    if ((newGeneralRole === 'department_head' || newGeneralRole === 'dormitory') && !newSpecificRole) {
+      console.log('Validation failed: Missing specific role for', newGeneralRole);
+      alert('Please select a department or block');
+      return;
+    }
+    const student_id = String(selectedStudentForRole.student_id);
+    try {
+      const payload = {
+        user_id: selectedStudentForRole.student_id,
+        general_role: newGeneralRole,
+        specific_role: newGeneralRole === 'department_head' || newGeneralRole === 'dormitory' ? newSpecificRole : null,
+      };
+      console.log('Sending payload to /admin/roles:', payload);
+      const response = await axios.post('http://localhost:3000/api/admin/roles', payload, {
+        headers: { Authorization: `Bearer ${user?.token}` },
+      });
+      console.log('Assign role response:', response.data);
 
-        setStudentAdditionalRoles((prev) => {
-          const existing = prev[student_id] || [];
-          const roleExists = existing.some(
-            (r) => r.role === 'staff' && r.department === newDepartment
-          );
-          if (roleExists) {
-            alert(`Student already has the staff role in ${newDepartment}`);
-            return prev;
-          }
-          return {
-            ...prev,
-            [student_id]: [...existing, { role: 'staff', department: newDepartment }],
-          };
-        });
-
-        alert(
-          `Staff role in ${newDepartment} assigned to ${selectedStudentForRole.first_name} ${selectedStudentForRole.last_name}`
+      setStudentAdditionalRoles((prev) => {
+        const existing = prev[student_id] || [];
+        const roleExists = existing.some(
+          (r) =>
+            r.general_role === newGeneralRole &&
+            r.specific_role === (newGeneralRole === 'department_head' || newGeneralRole === 'dormitory' ? newSpecificRole : null)
         );
-        setStudentIdInput('');
-        setSelectedStudentForRole(null);
-        setNewRole('');
-        setNewDepartment('');
-      } catch (err: any) {
-        console.error('Assign role error:', err);
-        alert(err.response?.data?.error || 'Failed to assign role');
-      }
+        if (roleExists) {
+          console.log('Role already exists:', { general_role: newGeneralRole, specific_role: newSpecificRole });
+          alert(`Student already has the role: ${newGeneralRole}${newSpecificRole ? ` (${newSpecificRole})` : ''}`);
+          return prev;
+        }
+        return {
+          ...prev,
+          [student_id]: [
+            ...existing,
+            {
+              general_role: newGeneralRole,
+              specific_role: newGeneralRole === 'department_head' || newGeneralRole === 'dormitory' ? newSpecificRole : null,
+            },
+          ],
+        };
+      });
+
+      alert(
+        `Role (${newGeneralRole}${newSpecificRole ? ` - ${newSpecificRole}` : ''}) assigned to ${selectedStudentForRole.first_name} ${selectedStudentForRole.last_name}`
+      );
+      setStudentIdInput('');
+      setSelectedStudentForRole(null);
+      setNewGeneralRole('');
+      setNewSpecificRole('');
+    } catch (err: any) {
+      console.error('Assign role error:', err.response?.data || err.message);
+      alert(err.response?.data?.error || 'Failed to assign role. Check console for details.');
     }
   };
-
-  // Get unique departments for filter dropdown
-  const departments = Array.from(new Set(students.map((s) => s.department_name))).filter(Boolean);
-
-  // Filtering logic for flat student objects
+  // Filtering logic for students
   const filteredStudents = students.filter(
     (s) =>
       (filterYear === 'all' || String(s.year_of_study) === filterYear) &&
@@ -282,18 +381,12 @@ export default function SuperAdmin() {
   );
 
   const getOverviewStats = () => {
-    const totalStudents = students.length;
-    const totalRequests = 0; // Update if requests are fetched
-    const approvedRequests = 0;
-    const pendingRequests = 0;
-    const rejectedRequests = 0;
-
     return {
-      totalStudents,
-      totalRequests,
-      approvedRequests,
-      pendingRequests,
-      rejectedRequests,
+      totalStudents: students.length,
+      totalRequests: recentRequests.length,
+      approvedRequests: recentRequests.filter(r => r.overall_status === 'approved').length,
+      pendingRequests: recentRequests.filter(r => r.overall_status === 'pending').length,
+      rejectedRequests: recentRequests.filter(r => r.overall_status === 'rejected').length,
       adminName: currentRegistrarAdmin
         ? `${currentRegistrarAdmin.first_name} ${currentRegistrarAdmin.last_name}`
         : 'No Admin Assigned',
@@ -331,8 +424,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('overview')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'overview'
-                  ? 'bg-white text-purple-600 hover:bg-white/90'
-                  : 'bg-purple-600/20 text-white hover:bg-white/20'
+                ? 'bg-white text-purple-600 hover:bg-white/90'
+                : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <BarChart3 className="w-4 h-4 mr-2" />
@@ -342,8 +435,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('students')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'students'
-                  ? 'bg-white text-purple-600 hover:bg-white/90'
-                  : 'bg-purple-600/20 text-white hover:bg-white/20'
+                ? 'bg-white text-purple-600 hover:bg-white/90'
+                : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <Users className="w-4 h-4 mr-2" />
@@ -353,8 +446,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('accounts')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'accounts'
-                  ? 'bg-white text-purple-600 hover:bg-white/90'
-                  : 'bg-purple-600/20 text-white hover:bg-white/20'
+                ? 'bg-white text-purple-600 hover:bg-white/90'
+                : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <UserPlus className="w-4 h-4 mr-2" />
@@ -364,8 +457,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('admin')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'admin'
-                  ? 'bg-white text-purple-600 hover:bg-white/90'
-                  : 'bg-purple-600/20 text-white hover:bg-white/20'
+                ? 'bg-white text-purple-600 hover:bg-white/90'
+                : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <Shield className="w-4 h-4 mr-2" />
@@ -375,8 +468,8 @@ export default function SuperAdmin() {
               variant="ghost"
               onClick={() => setActiveTab('import')}
               className={`w-full rounded-lg px-3 py-1.5 text-sm font-medium h-auto min-h-0 justify-start ${activeTab === 'import'
-                  ? 'bg-white text-purple-600 hover:bg-white/90'
-                  : 'bg-purple-600/20 text-white hover:bg-white/20'
+                ? 'bg-white text-purple-600 hover:bg-white/90'
+                : 'bg-purple-600/20 text-white hover:bg-white/20'
                 }`}
             >
               <Upload className="w-4 h-4 mr-2" />
@@ -404,26 +497,24 @@ export default function SuperAdmin() {
                       </div>
                       <div className="ml-4">
                         <p className="text-sm text-gray-600">Total Students</p>
-                        <p className="text-2xl font-bold text-gray-900">{stats.totalStudents}</p>
+                        <p className="text-2xl font-bold text-gray-900">{getOverviewStats().totalStudents}</p>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-
                 <Card>
                   <CardContent className="p-6">
                     <div className="flex items-center">
                       <div className="p-2 bg-purple-100 rounded-lg">
-                        <Settings className="w-6 h-6 text-purple-600" />
+                        <BarChart3 className="w-6 h-6 text-purple-600" />
                       </div>
                       <div className="ml-4">
                         <p className="text-sm text-gray-600">Total Requests</p>
-                        <p className="text-2xl font-bold text-gray-900">{stats.totalRequests}</p>
+                        <p className="text-2xl font-bold text-gray-900">{getOverviewStats().totalRequests}</p>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-
                 <Card>
                   <CardContent className="p-6">
                     <div className="flex items-center">
@@ -432,12 +523,11 @@ export default function SuperAdmin() {
                       </div>
                       <div className="ml-4">
                         <p className="text-sm text-gray-600">Approved</p>
-                        <p className="text-2xl font-bold text-gray-900">{stats.approvedRequests}</p>
+                        <p className="text-2xl font-bold text-gray-900">{getOverviewStats().approvedRequests}</p>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-
                 <Card>
                   <CardContent className="p-6">
                     <div className="flex items-center">
@@ -550,8 +640,8 @@ export default function SuperAdmin() {
                         <SelectContent>
                           <SelectItem value="all">All Departments</SelectItem>
                           {departments.map((dept) => (
-                            <SelectItem key={dept} value={dept}>
-                              {dept}
+                            <SelectItem key={dept.department_id} value={dept.department_name}>
+                              {dept.department_name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -621,7 +711,7 @@ export default function SuperAdmin() {
                               <td className="p-3">{student.department_name}</td>
                               <td className="p-3">{student.year_of_study}</td>
                               <td className="p-3">{student.study_level}</td>
-                              <td className="p-3">{student.clearance_status}</td>
+                              <td className="p-3">{getStatusBadge(student.clearance_status)}</td>
                             </tr>
                           ))
                         ) : (
@@ -659,17 +749,20 @@ export default function SuperAdmin() {
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div>
-                      <h4 className="font-semibold mb-4">Assign Staff Role to Student</h4>
+                      <h4 className="font-semibold mb-4">Assign Role to Student</h4>
                       <div className="space-y-4">
                         <div>
                           <Label>Student ID</Label>
                           <Input
                             value={studentIdInput}
                             onChange={(e) => {
-                              setStudentIdInput(e.target.value);
+                              const value = e.target.value.trim();
+                              setStudentIdInput(value);
                               const foundStudent = students.find(
-                                (s) => String(s.student_id) === e.target.value
+                                (s) => String(s.student_id).toLowerCase() === value.toLowerCase() ||
+                                  (s.id_no && s.id_no.toLowerCase() === value.toLowerCase())
                               );
+                              console.log('Student search:', { input: value, foundStudent, studentsLength: students.length });
                               setSelectedStudentForRole(foundStudent || null);
                             }}
                             placeholder="Enter student ID (e.g., ETS0192/14)"
@@ -692,36 +785,70 @@ export default function SuperAdmin() {
 
                         <div>
                           <Label>Assign Role</Label>
-                          <Select value={newRole} onValueChange={setNewRole}>
+                          <Select value={newGeneralRole} onValueChange={(value) => {
+                            console.log('Selected general role:', value);
+                            setNewGeneralRole(value);
+                            setNewSpecificRole('');
+                          }}>
                             <SelectTrigger>
                               <SelectValue placeholder="Select role" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="staff">Staff</SelectItem>
+                              <SelectItem value="department_head">Department Head</SelectItem>
+                              <SelectItem value="dormitory">Dormitory</SelectItem>
+                              <SelectItem value="library">Library</SelectItem>
+                              <SelectItem value="cafeteria">Cafeteria</SelectItem>
+                              <SelectItem value="student_affairs">Student Affairs</SelectItem>
+                              <SelectItem value="sports">Sports</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
 
-                        {newRole === 'staff' && (
+                        {newGeneralRole === 'department_head' && (
                           <div>
-                            <Label>Department Assignment</Label>
-                            <Select value={newDepartment} onValueChange={setNewDepartment}>
+                            <Label>Department</Label>
+                            <Select value={newSpecificRole} onValueChange={(value) => {
+                              console.log('Selected department:', value);
+                              setNewSpecificRole(value);
+                            }}>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select department" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="registrar">Registrar Office</SelectItem>
-                                <SelectItem value="library">Library</SelectItem>
-                                <SelectItem value="cafeteria">Cafeteria</SelectItem>
-                                <SelectItem value="student_affairs">Student Affairs</SelectItem>
-                                <SelectItem value="sports">Sports Department</SelectItem>
-                                <SelectItem value="cs">Computer Science</SelectItem>
-                                <SelectItem value="it">Information Technology</SelectItem>
-                                <SelectItem value="se">Software Engineering</SelectItem>
-                                <SelectItem value="ee">Electrical Engineering</SelectItem>
-                                <SelectItem value="me">Mechanical Engineering</SelectItem>
-                                <SelectItem value="ce">Civil Engineering</SelectItem>
-                                <SelectItem value="che">Chemical Engineering</SelectItem>
+                                {departments.length > 0 ? (
+                                  departments.map((dept) => (
+                                    <SelectItem key={dept.department_id} value={dept.department_name}>
+                                      {dept.department_name}
+                                    </SelectItem>
+                                  ))
+                                ) : (
+                                  <div className="text-gray-500">No departments available</div>
+                                )}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        {newGeneralRole === 'dormitory' && (
+                          <div>
+                            <Label>Block</Label>
+                            <Select value={newSpecificRole} onValueChange={(value) => {
+                              console.log('Selected block:', value);
+                              setNewSpecificRole(value);
+                            }}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select block" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {blocks.length > 0 ? (
+                                  blocks.map((block) => (
+                                    <SelectItem key={block.block_id} value={block.block_no}>
+                                      {block.block_no}
+                                    </SelectItem>
+                                  ))
+                                ) : (
+                                  <div className="text-gray-500">No blocks available</div>
+                                )}
                               </SelectContent>
                             </Select>
                           </div>
@@ -729,18 +856,29 @@ export default function SuperAdmin() {
 
                         <Button
                           className="w-full bg-purple-600 hover:bg-purple-700"
-                          disabled={!selectedStudentForRole || !newRole || !newDepartment}
-                          onClick={handleAssignRole}
+                          disabled={
+                            !selectedStudentForRole ||
+                            !newGeneralRole ||
+                            ((newGeneralRole === 'department_head' || newGeneralRole === 'dormitory') && !newSpecificRole)
+                          }
+                          onClick={() => {
+                            console.log('Button clicked, disabled state:', {
+                              hasStudent: !!selectedStudentForRole,
+                              hasGeneralRole: !!newGeneralRole,
+                              needsSpecificRole: newGeneralRole === 'department_head' || newGeneralRole === 'dormitory',
+                              hasSpecificRole: !!newSpecificRole,
+                            });
+                            handleAssignRole();
+                          }}
                         >
-                          Assign Staff Role
+                          Assign Role
                         </Button>
                       </div>
                     </div>
 
                     <div>
                       <h4 className="font-semibold mb-4">
-                        Students with Additional Roles (
-                        {Object.keys(studentAdditionalRoles).length} students)
+                        Students with Additional Roles ({Object.keys(studentAdditionalRoles).length} students)
                       </h4>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
                         {Object.keys(studentAdditionalRoles).length > 0 ? (
@@ -760,35 +898,41 @@ export default function SuperAdmin() {
                                       <div className="mt-1 space-x-1 space-y-1">
                                         <Badge className="bg-green-100 text-green-800">Student</Badge>
                                         {additionalRoles.map((roleAssignment, index) => (
-                                          <Badge
-                                            key={index}
-                                            className="bg-blue-100 text-blue-800"
-                                          >
-                                            Staff ({roleAssignment.department})
+                                          <Badge key={index} className="bg-blue-100 text-blue-800">
+                                            {roleAssignment.general_role}
+                                            {roleAssignment.specific_role ? ` (${roleAssignment.specific_role})` : ''}
                                           </Badge>
                                         ))}
                                       </div>
                                     </div>
                                     <div className="text-right">
-                                      <p className="text-xs text-gray-500">
-                                        Year: {student.year_of_study}
-                                      </p>
+                                      <p className="text-xs text-gray-500">Year: {student.year_of_study}</p>
                                       {additionalRoles.length > 0 && (
                                         <Button
                                           variant="outline"
                                           size="sm"
                                           className="mt-1 text-xs"
-                                          onClick={() => {
+                                          onClick={async () => {
                                             if (
                                               window.confirm(
                                                 `Remove all additional roles for ${student.first_name} ${student.last_name}?`
                                               )
                                             ) {
-                                              setStudentAdditionalRoles((prev) => {
-                                                const updated = { ...prev };
-                                                delete updated[String(student.student_id)];
-                                                return updated;
-                                              });
+                                              try {
+                                                console.log('Removing roles for user_id:', student.student_id);
+                                                await axios.delete(`http://localhost:3000/api/admin/roles/${student.student_id}`, {
+                                                  headers: { Authorization: `Bearer ${user?.token}` },
+                                                });
+                                                setStudentAdditionalRoles((prev) => {
+                                                  const updated = { ...prev };
+                                                  delete updated[String(student.student_id)];
+                                                  return updated;
+                                                });
+                                                alert('Roles removed successfully');
+                                              } catch (err: any) {
+                                                console.error('Error removing roles:', err.response?.data || err.message);
+                                                alert(err.response?.data?.error || 'Failed to remove roles');
+                                              }
                                             }
                                           }}
                                         >
@@ -917,7 +1061,6 @@ export default function SuperAdmin() {
                           </div>
                         </div>
                       </div>
-
                       <div className="flex space-x-3 pt-4 border-t">
                         <Button
                           variant="outline"
