@@ -26,6 +26,12 @@ import {
   Clock,
   BarChart3,
   Filter,
+  Plus,
+  Trash2,
+  ArrowUp,
+  ArrowDown,
+  Edit,
+  Save,
   Upload // New icon for import
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -53,10 +59,17 @@ interface ClearanceRequest {
   department_name: string;
   year_of_study: number;
 }
+interface ClearanceFlowStep {
+  flow_id?: number; // Add this if available
+  step: number;
+  general_role: string;
+  study_level: string | null;
+  required_approvals: number;
+}
 
 export default function Admin() {
   const [user, setUser] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'system' | 'import'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'system' | 'import' | 'clearance-flow'>('overview');
   const [systemStatus, setSystemStatus] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -75,6 +88,153 @@ export default function Admin() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [importResult, setImportResult] = useState<{ message: string; errors: string[] | null } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  // Clearance Flow State
+  const [clearanceFlow, setClearanceFlow] = useState<ClearanceFlowStep[]>([]);
+  const [isLoadingFlow, setIsLoadingFlow] = useState(false);
+  const [flowMessage, setFlowMessage] = useState('');
+  const [editingStep, setEditingStep] = useState<number | null>(null);
+
+  // State for role to step mapping and available roles
+  const [roleStepMapping, setRoleStepMapping] = useState<{ [key: string]: number }>({});
+  const [availableRoles, setAvailableRoles] = useState<string[]>([]);
+  const [showFlowMessage, setShowFlowMessage] = useState<boolean>(false);
+
+
+
+  // Add this useEffect to automatically hide the message after timeout
+  useEffect(() => {
+    if (showFlowMessage) {
+      const timer = setTimeout(() => {
+        setShowFlowMessage(false);
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [showFlowMessage]);
+
+  // Handle step change for a role
+  const handleStepChange = (role: string, step: number) => {
+    setRoleStepMapping(prev => ({
+      ...prev,
+      [role]: step
+    }));
+  };
+
+  // New save handler with validation and popup
+  const saveAllChanges = async () => {
+    try {
+      // Convert roleStepMapping to flow array
+      const flow = Object.entries(roleStepMapping).map(([general_role, step]) => ({
+        step,
+        general_role
+      }));
+
+      // Validation: Check if all available roles are assigned
+      if (flow.length !== availableRoles.length) {
+        setFlowMessage('Error: All roles must be assigned to a step');
+        setShowFlowMessage(true);
+        setTimeout(() => setShowFlowMessage(false), 3000);
+        return;
+      }
+
+      // Validation: Check if step numbers start from 1 and have no gaps
+      const stepNumbers = flow.map(item => item.step);
+      const uniqueSteps = [...new Set(stepNumbers)].sort((a, b) => a - b);
+
+      if (uniqueSteps.length === 0) {
+        setFlowMessage('Error: No steps configured');
+        setShowFlowMessage(true);
+        setTimeout(() => setShowFlowMessage(false), 3000);
+        return;
+      }
+
+      if (uniqueSteps[0] !== 1) {
+        setFlowMessage('Error: Step numbers must start from 1');
+        setShowFlowMessage(true);
+        setTimeout(() => setShowFlowMessage(false), 3000);
+        return;
+      }
+
+      // Check for gaps in step numbers
+      for (let i = 0; i < uniqueSteps.length; i++) {
+        if (uniqueSteps[i] !== i + 1) {
+          setFlowMessage('Error: Step numbers must be consecutive without gaps');
+          setShowFlowMessage(true);
+          setTimeout(() => setShowFlowMessage(false), 3000);
+          return;
+        }
+      }
+
+      // Send to backend using axios
+      const response = await axios.put('/admin/clearance-flow/', { flow });
+
+      // Handle different possible response structures
+      if (response.data.success || response.status === 200) {
+        setFlowMessage('Clearance flow updated successfully!');
+        setShowFlowMessage(true);
+        setTimeout(() => setShowFlowMessage(false), 3000);
+      } else {
+        // If the backend returns a different structure, check for error message
+        const errorMessage = response.data.error || response.data.message || 'Failed to update clearance flow';
+        throw new Error(errorMessage);
+      }
+    } catch (error: any) {
+      console.error('Error saving clearance flow:', error);
+
+      // Extract meaningful error message
+      let errorMessage = 'Failed to update clearance flow';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      setFlowMessage(`Error: ${errorMessage}`);
+      setShowFlowMessage(true);
+      setTimeout(() => setShowFlowMessage(false), 3000);
+    }
+  };
+
+  // Load current flow and available roles from backend
+  useEffect(() => {
+    const fetchClearanceFlow = async () => {
+      setIsLoadingFlow(true);
+      try {
+        const response = await axios.get('/admin/clearance-flow/');
+        const data = response.data;
+
+        // Extract flow data from the nested response
+        const flowData: { step: number; general_role: string }[] = data.flow || [];
+
+        // Extract unique roles from the flow data with proper typing
+        const roles: string[] = [...new Set(flowData.map((item: { step: number; general_role: string }) => item.general_role))];
+        setAvailableRoles(roles);
+
+        // Convert backend flow data to roleStepMapping
+        const mapping: { [key: string]: number } = {};
+        flowData.forEach((item: { step: number; general_role: string }) => {
+          mapping[item.general_role] = item.step;
+        });
+
+        setRoleStepMapping(mapping);
+      } catch (error) {
+        console.error('Error fetching clearance flow:', error);
+      } finally {
+        setIsLoadingFlow(false);
+      }
+    };
+
+
+    if (activeTab === 'clearance-flow') {
+      fetchClearanceFlow();
+    }
+
+
+  }, [activeTab]);
+
+
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -119,6 +279,7 @@ export default function Admin() {
         setSystemStatus(false);
       });
   }, []);
+
 
   // Get unique departments for filter dropdown
   const departments = Array.from(new Set(students.map(s => s.department_name))).filter(Boolean);
@@ -288,6 +449,7 @@ export default function Admin() {
     }
   };
 
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -355,6 +517,20 @@ export default function Admin() {
             >
               <Upload className="w-4 h-4 mr-2" />
               Import
+            </Button>
+            {/* Add Clearance Flow Button */}
+            <Button
+              variant="ghost"
+              onClick={() => setActiveTab('clearance-flow')}
+              className={`w-full rounded-lg px-3 py-3 text-sm font-medium h-12 justify-start ${activeTab === 'clearance-flow'
+                ? 'bg-aastu-gold text-aastu-blue hover:bg-aastu-gold/90'
+                : 'bg-transparent text-white hover:bg-white/10 hover:text-white'
+                }`}
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+              Clearance Flow
             </Button>
           </nav>
         </aside>
@@ -443,9 +619,9 @@ export default function Admin() {
                             <th className="text-left p-3">Student</th>
                             <th className="text-left p-3">Department</th>
                             <th className="text-left p-3">Year</th>
-                              <th className="text-left p-3">Request Type</th>
-                              <th className="text-left p-3">Status</th>
-                              <th className="text-left p-3">Submitted</th>
+                            <th className="text-left p-3">Request Type</th>
+                            <th className="text-left p-3">Status</th>
+                            <th className="text-left p-3">Submitted</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -579,7 +755,7 @@ export default function Admin() {
                             <th className="text-left p-3">Clearance Status</th>
                           </tr>
                         </thead>
-                        <tbody>
+                        <tbody >
                           {(Array.isArray(filteredStudents) && filteredStudents.length > 0) ? (
                             filteredStudents.map(student => (
                               <tr key={student.student_id} className="border-b hover:bg-gray-50">
@@ -809,6 +985,101 @@ export default function Admin() {
                         </AlertDescription>
                       </Alert>
                     )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+            {/* Clearance Flow Tab */}
+            {activeTab === 'clearance-flow' && (
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Users className="w-5 h-5" />
+                      Clearance Flow Configuration
+                    </CardTitle>
+                    <CardDescription>
+                      Assign steps to each general role. PhD students automatically skip dormitory approval.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {/* Popup Message */}
+                    {showFlowMessage && (
+                      <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top duration-300">
+                        <Alert className={`shadow-lg ${flowMessage.includes('Error') ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+                          <AlertDescription>{flowMessage}</AlertDescription>
+                        </Alert>
+                      </div>
+                    )}
+
+                    {/* Flow Configuration Table */}
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h3 className="font-medium">Role to Step Assignment</h3>
+                        <Button onClick={saveAllChanges} className="flex items-center gap-2">
+                          <Save className="w-4 h-4" />
+                          Save All Changes
+                        </Button>
+                      </div>
+
+                      {isLoadingFlow ? (
+                        <div className="text-center py-8">Loading clearance flow...</div>
+                      ) : availableRoles.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                          No roles available
+                        </div>
+                      ) : (
+                        <div className="border rounded-lg bg-white">
+                          <table className="w-full">
+                                <thead>
+                                  <tr className="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200">
+                                    <th className="text-left p-4 font-medium text-gray-700 rounded-l-lg">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                        General Role
+                                      </div>
+                                    </th>
+                                    <th className="text-left p-4 font-medium text-gray-700 rounded-r-lg">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                        Step Assignment
+                                      </div>
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {availableRoles.map((role) => (
+                                    <tr key={role} className="border-b last:border-b-0">
+                                      <td className="p-4 capitalize">
+                                        {role.replace(/_/g, ' ')}
+                                      </td>
+                                      <td className="p-4">
+                                        <Select
+                                          value={roleStepMapping[role]?.toString() || '1'}
+                                          onValueChange={(value) => handleStepChange(role, parseInt(value))}
+                                        >
+                                          <SelectTrigger className="w-32">
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {Array.from({ length: availableRoles.length })
+                                              .map((_, index) => index + 1)
+                                              .map((step) => (
+                                                <SelectItem key={step} value={step.toString()}>
+                                                  Step {step}
+                                                </SelectItem>
+                                              ))
+                                            }
+                                          </SelectContent>
+                                        </Select>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               </div>

@@ -189,7 +189,7 @@ export default function Student() {
       alert('Certificate downloaded successfully!');
     } catch (err: any) {
       console.error('Certificate download error:', err.response?.data);
-      const errorMessage = err.response?.data?.error || 'Failed to download certificate. Ensure all departments have approved the request.';
+      const errorMessage = err.response?.data?.error || 'Failed to download certificate. Ensure all required departments have approved the request.';
       alert(errorMessage);
     }
   };
@@ -210,11 +210,10 @@ export default function Student() {
       // Do not revoke URL immediately to allow viewing; browser will handle cleanup
     } catch (err: any) {
       console.error('Certificate view error:', err.response?.data);
-      const errorMessage = err.response?.data?.error || 'Failed to view certificate. Ensure all departments have approved the request.';
+      const errorMessage = err.response?.data?.error || 'Failed to view certificate. Ensure all required departments have approved the request.';
       alert(errorMessage);
     }
   };
-
   const calculateProgress = (departments: any[] | undefined) => {
     if (!Array.isArray(departments) || departments.length === 0) return 0;
     const approved = departments.filter((d) => d.status === "approved").length;

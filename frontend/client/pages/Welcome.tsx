@@ -64,7 +64,7 @@ export default function Welcome() {
           </h2>
           <p className="text-xl text-white/90 max-w-3xl mx-auto leading-relaxed">
             Streamline your clearance process with our comprehensive digital
-            platform. Designed for students, staff, and administrators to manage
+            platform. Designed for students to manage
             clearance requests efficiently and transparently.
           </p>
         </div>
